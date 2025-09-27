@@ -56,6 +56,6 @@ tasks:
 
   release:
     cmds:
-      - git tag -a v1.0.0 -m "Initial release."
-      - git push origin v1.0.0
+      - git tag -a v1.0.1 -m "check existing flag also works for downloads"
+      - git push origin v1.0.1
       - goreleaser release
