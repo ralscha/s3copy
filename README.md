@@ -127,7 +127,7 @@ Download entire bucket prefix:
 - `--verbose`: Enable verbose output
 - `--timeout`: Timeout for operations in seconds (0 for no timeout)
 - `--retries`: Number of retry attempts for failed operations (default: 3)
-- `--check-existing`: Check if S3 object already exists with same checksum before uploading
+- `--check-existing`: Check if file already exists with same checksum before uploading/downloading (default: false)
 
 ## Checksum-Based Upload Optimization
 

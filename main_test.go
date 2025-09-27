@@ -1135,3 +1135,137 @@ func TestCheckExistingUploadSkip(t *testing.T) {
 		assert.Error(t, err)
 	})
 }
+
+func TestCheckExistingDownloadSkip(t *testing.T) {
+	ctx := context.Background()
+	bucketName := "test-check-existing-download-bucket"
+
+	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
+	defer cleanup()
+
+	restore := preserveGlobalVars()
+	defer restore()
+
+	tempDir := t.TempDir()
+	testContent := []byte("This is test content for check-existing download functionality")
+	s3Key := "test-check-existing-download.txt"
+
+	_, err := s3Client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(s3Key),
+		Body:   bytes.NewReader(testContent),
+	})
+	require.NoError(t, err)
+
+	localFile := filepath.Join(tempDir, "downloaded-file.txt")
+
+	t.Run("download when local file does not exist", func(t *testing.T) {
+		setTestConfig(fmt.Sprintf("s3://%s/%s", bucketName, s3Key), localFile, bucketName, false, false, false, true)
+		checkExisting = true
+
+		output := captureStdout(func() {
+			err := downloadFromS3(ctx)
+			assert.NoError(t, err)
+		})
+
+		assert.Contains(t, output, "Downloading")
+		assert.NotContains(t, output, "Skipping")
+
+		downloadedContent, err := os.ReadFile(localFile)
+		assert.NoError(t, err)
+		assert.Equal(t, testContent, downloadedContent)
+	})
+
+	t.Run("skip download when local file exists with same checksum", func(t *testing.T) {
+		setTestConfig(fmt.Sprintf("s3://%s/%s", bucketName, s3Key), localFile, bucketName, false, false, false, true)
+		checkExisting = true
+
+		output := captureStdout(func() {
+			err := downloadFromS3(ctx)
+			assert.NoError(t, err)
+		})
+
+		assert.Contains(t, output, "Skipping")
+		assert.Contains(t, output, "local file already exists with same checksum")
+	})
+
+	t.Run("download when local file exists with different checksum", func(t *testing.T) {
+		differentContent := []byte("Different local content with different checksum")
+		err := os.WriteFile(localFile, differentContent, 0644)
+		require.NoError(t, err)
+
+		setTestConfig(fmt.Sprintf("s3://%s/%s", bucketName, s3Key), localFile, bucketName, false, false, false, true)
+		checkExisting = true
+		verbose = true
+
+		output := captureStdout(func() {
+			err := downloadFromS3(ctx)
+			assert.NoError(t, err)
+		})
+
+		assert.Contains(t, output, "Downloading")
+		assert.Contains(t, output, "Local file exists but checksum differs")
+
+		downloadedContent, err := os.ReadFile(localFile)
+		assert.NoError(t, err)
+		assert.Equal(t, testContent, downloadedContent)
+	})
+
+	t.Run("check-existing disabled", func(t *testing.T) {
+		localFileDisabled := filepath.Join(tempDir, "downloaded-file-disabled.txt")
+		err := os.WriteFile(localFileDisabled, []byte("existing content"), 0644)
+		require.NoError(t, err)
+
+		setTestConfig(fmt.Sprintf("s3://%s/%s", bucketName, s3Key), localFileDisabled, bucketName, false, false, false, true)
+		checkExisting = false
+
+		output := captureStdout(func() {
+			err := downloadFromS3(ctx)
+			assert.NoError(t, err)
+		})
+
+		assert.Contains(t, output, "Downloading")
+		assert.NotContains(t, output, "Skipping")
+		assert.NotContains(t, output, "already exists")
+
+		downloadedContent, err := os.ReadFile(localFileDisabled)
+		assert.NoError(t, err)
+		assert.Equal(t, testContent, downloadedContent)
+	})
+
+	t.Run("check-existing with encryption disabled", func(t *testing.T) {
+		localFileEncrypted := filepath.Join(tempDir, "downloaded-file-encrypted.txt")
+		err := os.WriteFile(localFileEncrypted, testContent, 0644)
+		require.NoError(t, err)
+
+		setTestConfig(fmt.Sprintf("s3://%s/%s", bucketName, s3Key), localFileEncrypted, bucketName, true, false, false, true)
+		checkExisting = true
+		password = "testpassword"
+
+		output := captureStdout(func() {
+			err := downloadFromS3(ctx)
+			assert.Error(t, err) // Expected to fail due to decryption mismatch
+		})
+
+		assert.Contains(t, output, "Downloading")
+		assert.NotContains(t, output, "Skipping") // checkExisting should be bypassed with encryption
+	})
+
+	t.Run("dry run with check-existing", func(t *testing.T) {
+		localFileDryRun := filepath.Join(tempDir, "downloaded-file-dryrun.txt")
+
+		setTestConfig(fmt.Sprintf("s3://%s/%s", bucketName, s3Key), localFileDryRun, bucketName, false, false, false, true)
+		checkExisting = true
+		dryRun = true
+
+		output := captureStdout(func() {
+			err := downloadFromS3(ctx)
+			assert.NoError(t, err)
+		})
+
+		assert.Contains(t, output, "Downloading")
+
+		_, err := os.Stat(localFileDryRun)
+		assert.True(t, os.IsNotExist(err))
+	})
+}

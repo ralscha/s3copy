@@ -238,7 +238,7 @@ Supports gitignore-style file filtering for selective copying.`,
 			},
 			&cli.BoolFlag{
 				Name:        "check-existing",
-				Usage:       "Check if S3 object already exists with same checksum before uploading",
+				Usage:       "Check if file already exists with same checksum before uploading/downloading",
 				Destination: &checkExisting,
 			},
 		},
@@ -834,6 +834,32 @@ func downloadFile(downloader *manager.Downloader, s3Key, localPath string) error
 
 	if dryRun {
 		return nil
+	}
+
+	if checkExisting && !encrypt {
+		if _, err := os.Stat(localPath); err == nil {
+			localMD5, err := calculateFileMD5(localPath)
+			if err != nil {
+				logVerbose("Warning: Could not calculate MD5 for local file %s: %v\n", localPath, err)
+			} else {
+				s3Client, err := getS3Client(context.Background())
+				if err != nil {
+					logVerbose("Warning: Could not get S3 client for checksum check: %v\n", err)
+				} else {
+					exists, etag, err := checkS3ObjectExists(context.Background(), s3Client, bucket, s3Key)
+					if err != nil {
+						logVerbose("Warning: Could not check S3 object existence for %s: %v\n", s3Key, err)
+					} else if exists {
+						if etag == localMD5 {
+							logInfo("Skipping %s (local file already exists with same checksum)\n", localPath)
+							return nil
+						} else {
+							logVerbose("Local file exists but checksum differs (local: %s, remote: %s)\n", localMD5, etag)
+						}
+					}
+				}
+			}
+		}
 	}
 
 	file, err := os.Create(localPath)
