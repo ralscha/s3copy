@@ -1,0 +1,61 @@
+# https://taskfile.dev
+
+version: '3'
+
+vars:
+  CURRENT_DIR:
+    sh: pwd
+  SUFFIX: '{{if eq OS "windows"}}.exe{{end}}'
+
+tasks:
+  default:
+    cmds:
+      - task --list-all
+
+  lint:
+    cmds:
+      - docker run --rm -v {{toSlash .CURRENT_DIR}}:/app -w /app golangci/golangci-lint:v2.5.0 golangci-lint run -v --timeout 5m
+
+  upgrade-libraries:
+    cmds:
+      - go get go@latest
+      - go get -u ./...
+      - go fmt ./...
+      - go mod tidy
+      - go mod verify
+
+  tidy:
+    cmds:
+      - go fmt ./...
+      - go mod tidy -v
+
+  audit:
+    cmds:
+      - go vet ./...
+      - go mod verify
+
+  test:
+    cmds:
+      - go test -v ./...
+
+  bench:
+    cmds:
+      - go test -bench=. -benchmem ./...
+
+  cover:
+    cmds:
+      - go test -cover -coverprofile=coverage.out ./...
+      - go tool cover -html=coverage.out -o coverage.html
+    generates:
+      - coverage.out
+      - coverage.html
+
+  build:
+    cmds:
+      - goreleaser build --single-target --snapshot
+
+  release:
+    cmds:
+      - git tag -a v1.0.0 -m "Initial release."
+      - git push origin v1.0.0
+      - goreleaser release

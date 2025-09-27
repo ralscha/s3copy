@@ -1,0 +1,44 @@
+# Binaries
+s3copy.exe
+s3copy
+
+# Environment files with secrets
+.env
+
+# Test files
+test.txt
+*.tmp
+
+# Go build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go test files
+*.test
+
+# Coverage files
+coverage.out
+coverage.html
+
+# Go coverage files
+*.out
+
+# Dependency directories
+vendor/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
