@@ -20,31 +20,31 @@ tasks:
     cmds:
       - go get go@latest
       - go get -u ./...
-      - go fmt ./...
+      - go fmt ./cmd/s3copy
       - go mod tidy
       - go mod verify
 
   tidy:
     cmds:
-      - go fmt ./...
+      - go fmt ./cmd/s3copy
       - go mod tidy -v
 
   audit:
     cmds:
-      - go vet ./...
+      - go vet ./cmd/s3copy
       - go mod verify
 
   test:
     cmds:
-      - go test -v ./...
+      - go test -v ./cmd/s3copy
 
   bench:
     cmds:
-      - go test -bench=. -benchmem ./...
+      - go test -bench=. -benchmem ./cmd/s3copy
 
   cover:
     cmds:
-      - go test -cover -coverprofile=coverage.out ./...
+      - go test -cover -coverprofile=coverage.out ./cmd/s3copy
       - go tool cover -html=coverage.out -o coverage.html
     generates:
       - coverage.out
@@ -53,6 +53,10 @@ tasks:
   build:
     cmds:
       - goreleaser build --single-target --snapshot
+  
+  build-dev:
+    cmds:
+      - go build -o s3copy{{.SUFFIX}} ./cmd/s3copy
 
   release:
     cmds:
