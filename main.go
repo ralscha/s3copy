@@ -237,7 +237,7 @@ Supports gitignore-style file filtering for selective copying.`,
 				Destination: &retries,
 			},
 			&cli.BoolFlag{
-				Name:        "check-existing",
+				Name:        "skip-existing",
 				Usage:       "Check if file already exists with same checksum before uploading/downloading",
 				Destination: &checkExisting,
 			},

@@ -79,7 +79,7 @@ Upload directory with encryption:
 
 Upload with checksum checking (skip if file already exists with same content):
 ```bash
-./s3copy -s ./my_folder -d s3://mybucket/backup/ -r --check-existing
+./s3copy -s ./my_folder -d s3://mybucket/backup/ -r --skip-existing
 ```
 
 Download encrypted file:
@@ -153,11 +153,11 @@ Download entire bucket prefix:
 - `--verbose`: Enable verbose output
 - `--timeout`: Timeout for operations in seconds (0 for no timeout)
 - `--retries`: Number of retry attempts for failed operations (default: 3)
-- `--check-existing`: Check if file already exists with same checksum before uploading/downloading (default: false)
+- `--skip-existing`: Check if file already exists with same checksum before uploading/downloading. If true, skip the operation (default: false)
 
 ## Checksum-Based Upload Optimization
 
-The `--check-existing` flag enables intelligent uploading by comparing file checksums before uploading. This feature helps avoid unnecessary uploads when files haven't changed.
+The `--skip-existing` flag enables intelligent uploading/downloading by comparing file checksums before uploading/downloading. This feature helps avoid unnecessary uploads and downloads when files haven't changed.
 
 ### How It Works
 

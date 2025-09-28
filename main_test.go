@@ -1037,9 +1037,9 @@ func TestCheckS3ObjectExists(t *testing.T) {
 	})
 }
 
-func TestCheckExistingUploadSkip(t *testing.T) {
+func TestSkipExistingUploadSkip(t *testing.T) {
 	ctx := context.Background()
-	bucketName := "test-check-existing-bucket"
+	bucketName := "test-skip-existing-bucket"
 
 	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
 	defer cleanup()
@@ -1049,14 +1049,14 @@ func TestCheckExistingUploadSkip(t *testing.T) {
 
 	tempDir := t.TempDir()
 	sourceFile := filepath.Join(tempDir, "test-file.txt")
-	testContent := []byte("This is test content for check-existing functionality")
+	testContent := []byte("This is test content for skip-existing functionality")
 	err := os.WriteFile(sourceFile, testContent, 0644)
 	require.NoError(t, err)
 
 	_, err = calculateFileMD5(sourceFile)
 	require.NoError(t, err)
 
-	s3Key := "test-check-existing.txt"
+	s3Key := "test-skip-existing.txt"
 
 	t.Run("upload when object does not exist", func(t *testing.T) {
 		setTestConfig(sourceFile, fmt.Sprintf("s3://%s/%s", bucketName, s3Key), bucketName, false, false, false, true)
@@ -1112,7 +1112,7 @@ func TestCheckExistingUploadSkip(t *testing.T) {
 		assert.Contains(t, output, "Object exists but no local MD5 in metadata, will upload")
 	})
 
-	t.Run("check-existing disabled", func(t *testing.T) {
+	t.Run("skip-existing disabled", func(t *testing.T) {
 		setTestConfig(sourceFile, fmt.Sprintf("s3://%s/%s-disabled", bucketName, s3Key), bucketName, false, false, false, true)
 		checkExisting = false
 
@@ -1126,7 +1126,7 @@ func TestCheckExistingUploadSkip(t *testing.T) {
 		assert.NotContains(t, output, "already exists")
 	})
 
-	t.Run("check-existing with encryption disabled", func(t *testing.T) {
+	t.Run("skip-existing with encryption disabled", func(t *testing.T) {
 		setTestConfig(sourceFile, fmt.Sprintf("s3://%s/%s-encrypted", bucketName, s3Key), bucketName, true, false, false, true)
 		checkExisting = true
 		password = "testpassword"
@@ -1140,7 +1140,7 @@ func TestCheckExistingUploadSkip(t *testing.T) {
 		assert.NotContains(t, output, "Skipping")
 	})
 
-	t.Run("dry run with check-existing", func(t *testing.T) {
+	t.Run("dry run with skip-existing", func(t *testing.T) {
 		setTestConfig(sourceFile, fmt.Sprintf("s3://%s/%s-dryrun", bucketName, s3Key), bucketName, false, false, false, true)
 		checkExisting = true
 		dryRun = true
@@ -1160,9 +1160,9 @@ func TestCheckExistingUploadSkip(t *testing.T) {
 	})
 }
 
-func TestCheckExistingDownloadSkip(t *testing.T) {
+func TestSkipExistingDownloadSkip(t *testing.T) {
 	ctx := context.Background()
-	bucketName := "test-check-existing-download-bucket"
+	bucketName := "test-skip-existing-download-bucket"
 
 	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
 	defer cleanup()
@@ -1171,8 +1171,8 @@ func TestCheckExistingDownloadSkip(t *testing.T) {
 	defer restore()
 
 	tempDir := t.TempDir()
-	testContent := []byte("This is test content for check-existing download functionality")
-	s3Key := "test-check-existing-download.txt"
+	testContent := []byte("This is test content for skip-existing download functionality")
+	s3Key := "test-skip-existing-download.txt"
 
 	_, err := s3Client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(bucketName),
@@ -1235,7 +1235,7 @@ func TestCheckExistingDownloadSkip(t *testing.T) {
 		assert.Equal(t, testContent, downloadedContent)
 	})
 
-	t.Run("check-existing disabled", func(t *testing.T) {
+	t.Run("skip-existing disabled", func(t *testing.T) {
 		localFileDisabled := filepath.Join(tempDir, "downloaded-file-disabled.txt")
 		err := os.WriteFile(localFileDisabled, []byte("existing content"), 0644)
 		require.NoError(t, err)
@@ -1257,7 +1257,7 @@ func TestCheckExistingDownloadSkip(t *testing.T) {
 		assert.Equal(t, testContent, downloadedContent)
 	})
 
-	t.Run("check-existing with encryption disabled", func(t *testing.T) {
+	t.Run("skip-existing with encryption disabled", func(t *testing.T) {
 		localFileEncrypted := filepath.Join(tempDir, "downloaded-file-encrypted.txt")
 		err := os.WriteFile(localFileEncrypted, testContent, 0644)
 		require.NoError(t, err)
@@ -1272,10 +1272,10 @@ func TestCheckExistingDownloadSkip(t *testing.T) {
 		})
 
 		assert.Contains(t, output, "Downloading")
-		assert.NotContains(t, output, "Skipping") // checkExisting should be bypassed with encryption
+		assert.NotContains(t, output, "Skipping") // skip-existing should be bypassed with encryption
 	})
 
-	t.Run("dry run with check-existing", func(t *testing.T) {
+	t.Run("dry run with skip-existing", func(t *testing.T) {
 		localFileDryRun := filepath.Join(tempDir, "downloaded-file-dryrun.txt")
 
 		setTestConfig(fmt.Sprintf("s3://%s/%s", bucketName, s3Key), localFileDryRun, bucketName, false, false, false, true)
