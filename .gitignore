@@ -1,6 +1,6 @@
 # Binaries
 s3copy.exe
-s3copy
+/s3copy
 
 # Environment files with secrets
 .env
