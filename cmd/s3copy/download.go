@@ -153,14 +153,14 @@ func downloadFile(downloader *manager.Downloader, s3Key, localPath string) error
 	if err != nil {
 		return fmt.Errorf("failed to create file %s: %v", localPath, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	if encrypt {
 		pipeReader, pipeWriter := io.Pipe()
 
 		decryptErr := make(chan error, 1)
 		go func() {
-			defer pipeReader.Close()
+			defer func() { _ = pipeReader.Close() }()
 			decryptErr <- decryptStreamFromReader(file, pipeReader)
 		}()
 
@@ -174,7 +174,7 @@ func downloadFile(downloader *manager.Downloader, s3Key, localPath string) error
 			return err
 		}, "Download", 3)
 
-		pipeWriter.Close()
+		_ = pipeWriter.Close()
 
 		if downloadErr != nil {
 			return downloadErr

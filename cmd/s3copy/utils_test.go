@@ -58,12 +58,12 @@ func TestCalculateFileMD5(t *testing.T) {
 	t.Run("CalculateMD5ForFile", func(t *testing.T) {
 		tmpFile, err := os.CreateTemp("", "test-md5-*.txt")
 		require.NoError(t, err)
-		defer os.Remove(tmpFile.Name())
+		defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 		testContent := "Hello, World!\nThis is a test file.\n"
 		_, err = tmpFile.WriteString(testContent)
 		require.NoError(t, err)
-		tmpFile.Close()
+		_ = tmpFile.Close()
 
 		hash, err := calculateFileMD5(tmpFile.Name())
 		require.NoError(t, err)

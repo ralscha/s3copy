@@ -36,11 +36,11 @@ func TestInitializeIgnoreMatcher(t *testing.T) {
 	t.Run("with ignore file", func(t *testing.T) {
 		tempFile, err := os.CreateTemp("", "ignore_test")
 		require.NoError(t, err)
-		defer os.Remove(tempFile.Name())
+		defer func() { _ = os.Remove(tempFile.Name()) }()
 
 		_, err = tempFile.WriteString("*.bak\n# comment\n*.old\n")
 		require.NoError(t, err)
-		tempFile.Close()
+		_ = tempFile.Close()
 
 		ignorePatterns = ""
 		ignoreFile = tempFile.Name()
@@ -59,12 +59,12 @@ func TestReadIgnoreFile(t *testing.T) {
 	t.Run("valid file", func(t *testing.T) {
 		tempFile, err := os.CreateTemp("", "ignore_test")
 		require.NoError(t, err)
-		defer os.Remove(tempFile.Name())
+		defer func() { _ = os.Remove(tempFile.Name()) }()
 
 		content := "*.tmp\n\n# comment\n*.log\n"
 		_, err = tempFile.WriteString(content)
 		require.NoError(t, err)
-		tempFile.Close()
+		_ = tempFile.Close()
 
 		patterns, err := readIgnoreFile(tempFile.Name())
 		assert.NoError(t, err)

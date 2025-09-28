@@ -10,13 +10,13 @@ import (
 
 func TestConfig(t *testing.T) {
 	t.Run("environment variable configuration", func(t *testing.T) {
-		os.Setenv("AWS_ACCESS_KEY_ID", "test-access-key")
-		os.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
-		os.Setenv("AWS_REGION", "us-west-2")
+		_ = os.Setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+		_ = os.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+		_ = os.Setenv("AWS_REGION", "us-west-2")
 		defer func() {
-			os.Unsetenv("AWS_ACCESS_KEY_ID")
-			os.Unsetenv("AWS_SECRET_ACCESS_KEY")
-			os.Unsetenv("AWS_REGION")
+			_ = os.Unsetenv("AWS_ACCESS_KEY_ID")
+			_ = os.Unsetenv("AWS_SECRET_ACCESS_KEY")
+			_ = os.Unsetenv("AWS_REGION")
 		}()
 
 		config = Config{}

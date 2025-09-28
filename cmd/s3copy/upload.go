@@ -178,7 +178,7 @@ func uploadFile(uploader *manager.Uploader, filePath, s3Key string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open file %s: %v", filePath, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var reader io.Reader = file
 
@@ -195,7 +195,7 @@ func uploadFile(uploader *manager.Uploader, filePath, s3Key string) error {
 
 		errChan := make(chan error, 1)
 		go func() {
-			defer pipeWriter.Close()
+			defer func() { _ = pipeWriter.Close() }()
 			errChan <- encryptStream(pipeWriter, file)
 		}()
 
