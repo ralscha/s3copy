@@ -997,16 +997,18 @@ func TestCheckS3ObjectExists(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		exists, etag, err := checkS3ObjectExists(ctx, s3Client, bucketName, key)
+		exists, etag, metadata, err := checkS3ObjectExists(ctx, s3Client, bucketName, key)
 		assert.NoError(t, err)
 		assert.True(t, exists)
 		assert.NotEmpty(t, etag)
+		_ = metadata // metadata may be nil or empty for simple uploads
 	})
 
 	t.Run("object does not exist", func(t *testing.T) {
 		key := "non-existent-key.txt"
 
-		exists, etag, err := checkS3ObjectExists(ctx, s3Client, bucketName, key)
+		exists, etag, metadata, err := checkS3ObjectExists(ctx, s3Client, bucketName, key)
+		_ = metadata // metadata may be nil for non-existent objects
 		if err != nil {
 			t.Logf("Error returned: %v", err)
 			assert.Contains(t, err.Error(), "404")
@@ -1022,13 +1024,15 @@ func TestCheckS3ObjectExists(t *testing.T) {
 		key := "test-key.txt"
 		nonExistentBucket := "non-existent-bucket"
 
-		exists, etag, err := checkS3ObjectExists(ctx, s3Client, nonExistentBucket, key)
+		exists, etag, metadata, err := checkS3ObjectExists(ctx, s3Client, nonExistentBucket, key)
 		if err != nil {
 			assert.False(t, exists)
 			assert.Empty(t, etag)
+			assert.Nil(t, metadata)
 		} else {
 			assert.False(t, exists)
 			assert.Empty(t, etag)
+			assert.Nil(t, metadata)
 		}
 	})
 }
@@ -1105,7 +1109,7 @@ func TestCheckExistingUploadSkip(t *testing.T) {
 		})
 
 		assert.Contains(t, output, "Uploading")
-		assert.Contains(t, output, "Object exists but checksum differs")
+		assert.Contains(t, output, "Object exists but no local MD5 in metadata, will upload")
 	})
 
 	t.Run("check-existing disabled", func(t *testing.T) {
@@ -1224,7 +1228,7 @@ func TestCheckExistingDownloadSkip(t *testing.T) {
 		})
 
 		assert.Contains(t, output, "Downloading")
-		assert.Contains(t, output, "Local file exists but checksum differs")
+		assert.Contains(t, output, "Local file exists but no remote MD5 in metadata, will download")
 
 		downloadedContent, err := os.ReadFile(localFile)
 		assert.NoError(t, err)
