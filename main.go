@@ -274,7 +274,9 @@ Supports gitignore-style file filtering for selective copying.`,
 
 func runCopy() error {
 	if err := godotenv.Load(envFile); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Could not load %s file: %v\n", envFile, err)
+		if !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Warning: Could not load %s file: %v\n", envFile, err)
+		}
 	}
 
 	config = Config{
