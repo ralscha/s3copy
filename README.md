@@ -97,6 +97,32 @@ Quiet operation:
 ./s3copy -s file.txt -d s3://mybucket/file.txt --quiet
 ```
 
+### Single Copy Mode
+
+When copying single files (not directories), s3copy provides intelligent path handling:
+
+#### Upload to S3 Directory
+When the S3 destination ends with `/`, the source filename is automatically appended:
+```bash
+# Upload localfile.txt to s3://mybucket/documents/localfile.txt
+./s3copy -s localfile.txt -d s3://mybucket/documents/
+
+# Upload report.pdf to s3://mybucket/reports/2023/report.pdf
+./s3copy -s report.pdf -d s3://mybucket/reports/2023/
+```
+
+#### Download to Local Directory
+When downloading to a local directory (`.`, `./`, or existing directory), the S3 key filename is used:
+```bash
+# Download s3://mybucket/path/to/file.txt to ./file.txt
+./s3copy -s s3://mybucket/path/to/file.txt -d ./
+
+# Download s3://mybucket/documents/report.pdf to /home/user/downloads/report.pdf
+./s3copy -s s3://mybucket/documents/report.pdf -d /home/user/downloads/
+```
+
+This behavior only applies to single file operations. For directory operations (`-r` flag), the full path structure is preserved.
+
 Verbose output with retries:
 ```bash
 ./s3copy -s large_file.zip -d s3://mybucket/large_file.zip --verbose --retries 5

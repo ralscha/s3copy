@@ -436,6 +436,8 @@ func parseS3Path(s3Path string, providedBucket string, isDir bool, localPath str
 			key = parts[1]
 			if (key == "" || key == "/") && !isDir {
 				key = filepath.Base(localPath)
+			} else if strings.HasSuffix(key, "/") && !isDir {
+				key = key + filepath.Base(localPath)
 			}
 		} else {
 			return "", "", fmt.Errorf("invalid S3 format, use s3://bucket/key or specify bucket with -b flag")
@@ -445,6 +447,8 @@ func parseS3Path(s3Path string, providedBucket string, isDir bool, localPath str
 		key = strings.TrimPrefix(s3Path, providedBucket+"/")
 		if key == "" && !isDir {
 			key = filepath.Base(localPath)
+		} else if strings.HasSuffix(key, "/") && !isDir {
+			key = key + filepath.Base(localPath)
 		}
 	}
 
@@ -777,7 +781,19 @@ func downloadFromS3(ctx context.Context) error {
 	})
 
 	if err == nil {
-		return downloadFile(downloader, s3Key, destination)
+		finalDestination := destination
+
+		if strings.HasSuffix(destination, "/") || destination == "." || destination == "./" {
+			filename := filepath.Base(s3Key)
+			finalDestination = filepath.Join(destination, filename)
+		} else {
+			if info, err := os.Stat(destination); err == nil && info.IsDir() {
+				filename := filepath.Base(s3Key)
+				finalDestination = filepath.Join(destination, filename)
+			}
+		}
+
+		return downloadFile(downloader, s3Key, finalDestination)
 	}
 
 	result, err := s3Client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{

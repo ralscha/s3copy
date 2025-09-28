@@ -258,6 +258,26 @@ func TestParseS3Path(t *testing.T) {
 			expectedKey:    "file.txt",
 			expectError:    false,
 		},
+		{
+			name:           "s3 path with directory and trailing slash - single copy mode",
+			s3Path:         "s3://mybucket/path/to/dir/",
+			providedBucket: "",
+			isDir:          false,
+			localPath:      "/tmp/myfile.txt",
+			expectedBucket: "mybucket",
+			expectedKey:    "path/to/dir/myfile.txt",
+			expectError:    false,
+		},
+		{
+			name:           "provided bucket with directory and trailing slash - single copy mode",
+			s3Path:         "s3://mybucket/some/folder/",
+			providedBucket: "mybucket",
+			isDir:          false,
+			localPath:      "/local/path/document.pdf",
+			expectedBucket: "mybucket",
+			expectedKey:    "some/folder/document.pdf",
+			expectError:    false,
+		},
 	}
 
 	for _, tt := range tests {
