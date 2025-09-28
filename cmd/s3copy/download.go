@@ -115,7 +115,7 @@ func downloadFile(downloader *manager.Downloader, s3Key, localPath string) error
 		return nil
 	}
 
-	if checkExisting && !encrypt {
+	if skipExisting && !encrypt {
 		if _, err := os.Stat(localPath); err == nil {
 			localMD5, err := calculateFileMD5(localPath)
 			if err != nil {

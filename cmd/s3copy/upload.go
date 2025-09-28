@@ -142,7 +142,7 @@ func uploadFile(uploader *manager.Uploader, filePath, s3Key string) error {
 		return nil
 	}
 
-	if checkExisting && !encrypt {
+	if skipExisting && !encrypt {
 		localMD5, err := calculateFileMD5(filePath)
 		if err != nil {
 			logVerbose("Warning: Could not calculate MD5 for %s: %v\n", filePath, err)

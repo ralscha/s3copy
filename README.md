@@ -154,6 +154,7 @@ Download entire bucket prefix:
 - `--timeout`: Timeout for operations in seconds (0 for no timeout)
 - `--retries`: Number of retry attempts for failed operations (default: 3)
 - `--skip-existing`: Check if file already exists with same checksum before uploading/downloading. If true, skip the operation (default: false)
+- `--sync`: Enable sync mode to make destination directory exactly match source directory (one-way sync)
 
 ## Checksum-Based Upload Optimization
 
@@ -170,9 +171,71 @@ The `--skip-existing` flag enables intelligent uploading/downloading by comparin
 
 - **Encryption**: Checksum checking is disabled when using encryption (`--encrypt`)
 
+## Sync Mode
+
+Sync mode ensures that the destination directory looks exactly like the source directory. The source is always treated as the master, and the destination is modified to match it. This feature is ideal for creating and maintaining exact replicas of directories.
+
+### How Sync Mode Works
+
+1. **Comparison**: Lists all files in both source and destination directories
+2. **Analysis**: Compares files by size and MD5 checksums to identify differences
+3. **One-Way Synchronization**: 
+   - Copies files that exist in source but not in destination
+   - Updates files in destination that differ from source
+   - Deletes files in destination that don't exist in source
+4. **Summary**: Provides a detailed report of all operations performed
+
+### Usage Examples
+
+#### Sync Local Directory to S3 (Local is Master)
+```bash
+# Make S3 bucket exactly match local directory
+./s3copy --sync -s ./local_folder -d s3://mybucket/backup/
+
+# Sync with dry run to see what would be done
+./s3copy --sync -s ./local_folder -d s3://mybucket/backup/ --dry-run
+
+# Sync with ignore patterns
+./s3copy --sync -s ./project -d s3://mybucket/project-backup/ --ignore "*.log,node_modules/,build/"
+```
+
+#### Sync S3 Directory to Local (S3 is Master)
+```bash
+# Make local folder exactly match S3 directory
+./s3copy --sync -s s3://mybucket/backup/ -d ./restored_folder
+
+
+### Sync Mode Features
+
+- **Directory Requirement**: Both source and destination must be directories
+- **Ignore Support**: Fully supports ignore patterns and ignore files
+- **Dry Run**: Use `--dry-run` to preview changes without making them
+- **Concurrent Operations**: Uses configurable worker pools for efficient transfers
+- **Detailed Reporting**: Shows uploaded, downloaded, deleted, and skipped files
+
+### Sync Mode Flags
+
+All regular flags work with sync mode, with these specific considerations:
+
+- `--sync`: Enable sync mode (required)
+- `--source`: Must be a directory path (local or S3)
+- `--destination`: Must be a directory path (local or S3)
+- `--dry-run`: Show what would be synchronized without making changes
+- `--ignore` / `--ignore-file`: Exclude files from synchronization
+- `--verbose`: Show detailed progress and file operations
+- `--max-workers`: Control concurrency for large sync operations
+
+### Important Notes
+
+- **One-Way Operation**: Source is always master; destination is modified to match source
+- **Destructive Operation**: Files in destination that don't exist in source will be deleted
+- **S3 to S3**: Direct S3-to-S3 sync is not supported (use local as intermediary)
+- **Safety**: Always test with `--dry-run` first to verify the intended operations
+- **Backup**: Consider backing up important data before running sync operations
+
 ## File Filtering (Ignore Patterns)
 
-s3copy supports gitignore-style patterns to exclude files and directories from upload operations. This is particularly useful for skipping temporary files, build artifacts, or sensitive data.
+s3copy supports gitignore-style patterns to exclude files and directories from upload and sync operations. This is particularly useful for skipping temporary files, build artifacts, or sensitive data.
 
 ### Using Command Line Patterns
 

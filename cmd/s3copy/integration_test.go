@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestS3UploadDownloadWithMinIO(t *testing.T) {
+func TestS3UploadDownload(t *testing.T) {
 	ctx := context.Background()
 	bucketName := "test-bucket"
 

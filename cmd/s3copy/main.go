@@ -30,7 +30,8 @@ var (
 	verbose        bool
 	timeout        int
 	retries        int
-	checkExisting  bool
+	skipExisting   bool
+	syncMode       bool
 )
 
 func main() {
@@ -147,7 +148,12 @@ Supports gitignore-style file filtering for selective copying.`,
 			&cli.BoolFlag{
 				Name:        "skip-existing",
 				Usage:       "Check if file already exists with same checksum before uploading/downloading",
-				Destination: &checkExisting,
+				Destination: &skipExisting,
+			},
+			&cli.BoolFlag{
+				Name:        "sync",
+				Usage:       "Sync mode: makes destination directory exactly match source directory (one-way sync)",
+				Destination: &syncMode,
 			},
 		},
 		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
@@ -161,6 +167,37 @@ Supports gitignore-style file filtering for selective copying.`,
 				}
 				if destination == "" {
 					return ctx, fmt.Errorf("destination is required when not listing objects")
+				}
+
+				if syncMode {
+					sourceIsS3 := strings.HasPrefix(source, "s3://")
+					destIsS3 := strings.HasPrefix(destination, "s3://")
+
+					if sourceIsS3 && destIsS3 {
+						return ctx, fmt.Errorf("S3 to S3 sync is not supported")
+					}
+
+					if !sourceIsS3 && !destIsS3 {
+						return ctx, fmt.Errorf("at least one of source or destination must be S3 in sync mode")
+					}
+
+					if !sourceIsS3 {
+						if info, err := os.Stat(source); err != nil {
+							return ctx, fmt.Errorf("source directory does not exist: %v", err)
+						} else if !info.IsDir() {
+							return ctx, fmt.Errorf("source must be a directory in sync mode")
+						}
+					}
+
+					if !destIsS3 {
+						if info, err := os.Stat(destination); err != nil {
+							if !os.IsNotExist(err) {
+								return ctx, fmt.Errorf("error checking destination: %v", err)
+							}
+						} else if !info.IsDir() {
+							return ctx, fmt.Errorf("destination must be a directory in sync mode")
+						}
+					}
 				}
 			} else {
 				if bucket == "" {
@@ -210,17 +247,6 @@ func runCopy() error {
 		return nil
 	}
 
-	sourceIsS3 := strings.HasPrefix(source, "s3://")
-	destIsS3 := strings.HasPrefix(destination, "s3://")
-
-	if sourceIsS3 && destIsS3 {
-		return fmt.Errorf("S3 to S3 copy is not supported")
-	}
-
-	if !sourceIsS3 && !destIsS3 {
-		return fmt.Errorf("at least one of source or destination must be S3")
-	}
-
 	if encrypt {
 		if password == "" || password == "PROMPT" {
 			var err error
@@ -234,23 +260,37 @@ func runCopy() error {
 		}
 	}
 
-	if sourceIsS3 {
-		ctx := context.Background()
-		if timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
-			defer cancel()
+	ctx := context.Background()
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+		defer cancel()
+	}
+
+	if syncMode {
+		if err := syncDirectories(ctx); err != nil {
+			return fmt.Errorf("error syncing directories: %v", err)
 		}
+		logInfo("Sync operation completed successfully!\n")
+		return nil
+	}
+
+	sourceIsS3 := strings.HasPrefix(source, "s3://")
+	destIsS3 := strings.HasPrefix(destination, "s3://")
+
+	if sourceIsS3 && destIsS3 {
+		return fmt.Errorf("S3 to S3 copy is not supported")
+	}
+
+	if !sourceIsS3 && !destIsS3 {
+		return fmt.Errorf("at least one of source or destination must be S3")
+	}
+
+	if sourceIsS3 {
 		if err := downloadFromS3(ctx); err != nil {
 			return fmt.Errorf("error downloading from S3: %v", err)
 		}
 	} else {
-		ctx := context.Background()
-		if timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
-			defer cancel()
-		}
 		if err := uploadToS3(ctx); err != nil {
 			return fmt.Errorf("error uploading to S3: %v", err)
 		}
