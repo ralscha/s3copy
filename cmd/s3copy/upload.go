@@ -21,34 +21,59 @@ func uploadToS3(ctx context.Context) error {
 
 	uploader := manager.NewUploader(s3Client)
 
-	info, err := os.Stat(source)
-	if err != nil {
-		return fmt.Errorf("failed to stat source: %v", err)
-	}
-
-	parsedBucket, s3Key, err := parseS3Path(destination, bucket, info.IsDir(), source)
-	if err != nil {
-		return err
-	}
-
-	if parsedBucket != "" {
-		bucket = parsedBucket
-	}
-
-	if info.IsDir() {
-		if !recursive {
-			return fmt.Errorf("source is a directory, use -r flag for recursive copy")
-		}
-		return uploadDirectory(uploader, source, s3Key)
-	}
-
 	matches, err := filepath.Glob(source)
 	if err != nil {
 		return fmt.Errorf("invalid glob pattern: %v", err)
 	}
 
 	if len(matches) == 0 {
-		return fmt.Errorf("no files match the pattern: %s", source)
+		info, err := os.Stat(source)
+		if err != nil {
+			return fmt.Errorf("failed to stat source: %v", err)
+		}
+
+		parsedBucket, s3Key, err := parseS3Path(destination, bucket, info.IsDir(), source)
+		if err != nil {
+			return err
+		}
+
+		if parsedBucket != "" {
+			bucket = parsedBucket
+		}
+
+		if info.IsDir() {
+			if !recursive {
+				return fmt.Errorf("source is a directory, use -r flag for recursive copy")
+			}
+			return uploadDirectory(uploader, source, s3Key)
+		}
+
+		return uploadFile(uploader, source, s3Key)
+	}
+
+	var parsedBucket, s3Key string
+
+	if len(matches) == 1 {
+		info, statErr := os.Stat(matches[0])
+		isDir := statErr == nil && info.IsDir()
+
+		if isDir && !recursive {
+			return fmt.Errorf("source is a directory, use -r flag for recursive copy")
+		}
+
+		parsedBucket, s3Key, err = parseS3Path(destination, bucket, isDir, matches[0])
+		if err != nil {
+			return err
+		}
+	} else {
+		parsedBucket, s3Key, err = parseS3Path(destination, bucket, true, "")
+		if err != nil {
+			return err
+		}
+	}
+
+	if parsedBucket != "" {
+		bucket = parsedBucket
 	}
 
 	for _, match := range matches {
@@ -65,14 +90,24 @@ func uploadToS3(ctx context.Context) error {
 
 		if info.IsDir() {
 			if recursive {
-				if err := uploadDirectory(uploader, match, filepath.Join(s3Key, filepath.Base(match))); err != nil {
+				var dirS3Key string
+				if len(matches) == 1 {
+					dirS3Key = s3Key
+				} else {
+					dirS3Key = filepath.Join(s3Key, filepath.Base(match))
+					dirS3Key = strings.ReplaceAll(dirS3Key, "\\", "/")
+				}
+				if err := uploadDirectory(uploader, match, dirS3Key); err != nil {
 					return err
 				}
+			} else {
+				logInfo("Skipping directory: %s (use -r flag for recursive copy)\n", match)
 			}
 		} else {
 			key := s3Key
 			if len(matches) > 1 {
 				key = filepath.Join(s3Key, filepath.Base(match))
+				key = strings.ReplaceAll(key, "\\", "/")
 			}
 			if err := uploadFile(uploader, match, key); err != nil {
 				return err
