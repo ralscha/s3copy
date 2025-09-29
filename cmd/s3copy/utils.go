@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
@@ -8,6 +9,18 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+)
+
+// Constants for configurable parameters
+const (
+	// DefaultEncryptionChunkSize is the default chunk size for encryption (1MB)
+	DefaultEncryptionChunkSize = 1024 * 1024
+	// DefaultWorkerPoolBufferMultiplier determines the buffer size for worker pool
+	DefaultWorkerPoolBufferMultiplier = 2
 )
 
 // calculateFileMD5 calculates the MD5 checksum of a file
@@ -41,13 +54,13 @@ func retryOperation(operation func() error, operationType string, maxAttempts in
 	return fmt.Errorf("failed to %s after %d attempts: %v", strings.ToLower(operationType), maxAttempts, lastErr)
 }
 
-// runWorkerPool executes tasks using a worker pool pattern
+// runWorkerPool executes tasks using a worker pool pattern with context support
 func runWorkerPool[T any](tasks []T, maxWorkers int, worker func(T) error) error {
 	if len(tasks) == 0 {
 		return nil
 	}
 
-	bufferSize := min(maxWorkers*2, len(tasks))
+	bufferSize := min(maxWorkers*DefaultWorkerPoolBufferMultiplier, len(tasks))
 	taskChan := make(chan T, bufferSize)
 	errChan := make(chan error, 1) // Only need to capture first error
 	var wg sync.WaitGroup
@@ -117,4 +130,95 @@ func logVerbose(format string, args ...any) {
 	if verbose {
 		fmt.Printf(format, args...)
 	}
+}
+
+// closeWithLog closes a resource and logs any error
+func closeWithLog(closer io.Closer, resourceName string) {
+	if err := closer.Close(); err != nil {
+		logVerbose("Warning: failed to close %s: %v\n", resourceName, err)
+	}
+}
+
+// performS3Upload performs an S3 upload operation with optional encryption
+func performS3Upload(ctx context.Context, uploader *manager.Uploader, bucket, key string, reader io.Reader, encrypt bool, metadata map[string]string) error {
+	uploadInput := &s3.PutObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+		Body:   reader,
+	}
+
+	if len(metadata) > 0 {
+		uploadInput.Metadata = metadata
+	}
+
+	return retryOperation(func() error {
+		_, err := uploader.Upload(ctx, uploadInput)
+		return err
+	}, "Upload", retries)
+}
+
+// performS3Download performs an S3 download operation with optional decryption
+func performS3Download(ctx context.Context, downloader *manager.Downloader, bucket, key string, writer io.WriterAt) error {
+	return retryOperation(func() error {
+		_, err := downloader.Download(ctx, writer, &s3.GetObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+		})
+		return err
+	}, "Download", retries)
+}
+
+// setupEncryptionPipe creates a pipe for encryption and returns reader, writer, and error channel
+func setupEncryptionPipe(sourceReader io.Reader) (io.Reader, *io.PipeWriter, chan error) {
+	pipeReader, pipeWriter := io.Pipe()
+	errChan := make(chan error, 1)
+
+	go func() {
+		defer closeWithLog(pipeWriter, "encryption pipe writer")
+		errChan <- encryptStream(pipeWriter, sourceReader)
+	}()
+
+	return pipeReader, pipeWriter, errChan
+}
+
+// setupDecryptionPipe creates a pipe for decryption and returns reader, writer, and error channel
+func setupDecryptionPipe(destinationWriter io.Writer) (*io.PipeReader, *io.PipeWriter, chan error) {
+	pipeReader, pipeWriter := io.Pipe()
+	errChan := make(chan error, 1)
+
+	go func() {
+		defer closeWithLog(pipeReader, "decryption pipe reader")
+		errChan <- decryptStreamFromReader(destinationWriter, pipeReader)
+	}()
+
+	return pipeReader, pipeWriter, errChan
+}
+
+// compareFileChecksums compares local file checksum with S3 object checksum
+func compareFileChecksums(ctx context.Context, s3Client *s3.Client, bucket, s3Key, localMD5 string) (bool, error) {
+	exists, etag, metadata, err := checkS3ObjectExists(ctx, s3Client, bucket, s3Key)
+	if err != nil {
+		return false, fmt.Errorf("could not check S3 object: %v", err)
+	}
+
+	if !exists {
+		return false, nil
+	}
+
+	if etag == localMD5 {
+		logInfo("Skipping %s (already exists with same checksum via ETag)\n", s3Key)
+		return true, nil
+	}
+
+	if storedMD5, exists := metadata["local-md5"]; exists {
+		if storedMD5 == localMD5 {
+			logInfo("Skipping %s (already exists with same checksum via metadata)\n", s3Key)
+			return true, nil
+		}
+		logVerbose("Object exists but checksum differs (local: %s, metadata: %s, etag: %s)\n", localMD5, storedMD5, etag)
+	} else {
+		logVerbose("Object exists but no local MD5 in metadata, will upload (local: %s, etag: %s)\n", localMD5, etag)
+	}
+
+	return false, nil
 }

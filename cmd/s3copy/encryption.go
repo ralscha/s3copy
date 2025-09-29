@@ -80,7 +80,7 @@ func encryptStream(writer io.Writer, reader io.Reader) error {
 		return fmt.Errorf("failed to create AEAD cipher: %v", err)
 	}
 
-	buf := make([]byte, 1024*1024) // 1MB chunks
+	buf := make([]byte, DefaultEncryptionChunkSize)
 	chunkCount := uint64(0)
 
 	for {

@@ -125,24 +125,12 @@ func downloadFile(downloader *manager.Downloader, s3Key, localPath string) error
 				if err != nil {
 					logVerbose("Warning: Could not get S3 client for checksum check: %v\n", err)
 				} else {
-					exists, etag, metadata, err := checkS3ObjectExists(context.Background(), s3Client, bucket, s3Key)
+					skip, err := compareFileChecksums(context.Background(), s3Client, bucket, s3Key, localMD5)
 					if err != nil {
-						logVerbose("Warning: Could not check S3 object existence for %s: %v\n", s3Key, err)
-					} else if exists {
-						if etag == localMD5 {
-							logInfo("Skipping %s (local file already exists with same checksum via ETag)\n", localPath)
-							return nil
-						}
-						if storedMD5, exists := metadata["local-md5"]; exists {
-							if storedMD5 == localMD5 {
-								logInfo("Skipping %s (local file already exists with same checksum via metadata)\n", localPath)
-								return nil
-							} else {
-								logVerbose("Local file exists but checksum differs (local: %s, metadata: %s, etag: %s)\n", localMD5, storedMD5, etag)
-							}
-						} else {
-							logVerbose("Local file exists but no remote MD5 in metadata, will download (local: %s, etag: %s)\n", localMD5, etag)
-						}
+						logVerbose("Warning: %v\n", err)
+					} else if skip {
+						logInfo("Skipping %s (local file already exists with same checksum)\n", localPath)
+						return nil
 					}
 				}
 			}
@@ -153,28 +141,13 @@ func downloadFile(downloader *manager.Downloader, s3Key, localPath string) error
 	if err != nil {
 		return fmt.Errorf("failed to create file %s: %v", localPath, err)
 	}
-	defer func() { _ = file.Close() }()
+	defer closeWithLog(file, localPath)
 
 	if encrypt {
-		pipeReader, pipeWriter := io.Pipe()
+		_, pipeWriter, decryptErr := setupDecryptionPipe(file)
 
-		decryptErr := make(chan error, 1)
-		go func() {
-			defer func() { _ = pipeReader.Close() }()
-			decryptErr <- decryptStreamFromReader(file, pipeReader)
-		}()
-
-		downloadErr := retryOperation(func() error {
-			_, err := downloader.Download(context.Background(),
-				&writeAtWrapper{w: pipeWriter},
-				&s3.GetObjectInput{
-					Bucket: aws.String(bucket),
-					Key:    aws.String(s3Key),
-				})
-			return err
-		}, "Download", retries)
-
-		_ = pipeWriter.Close()
+		downloadErr := performS3Download(context.Background(), downloader, bucket, s3Key, &writeAtWrapper{w: pipeWriter})
+		closeWithLog(pipeWriter, "decryption pipe writer")
 
 		if downloadErr != nil {
 			return downloadErr
@@ -184,13 +157,7 @@ func downloadFile(downloader *manager.Downloader, s3Key, localPath string) error
 			return fmt.Errorf("decryption failed: %v", err)
 		}
 	} else {
-		return retryOperation(func() error {
-			_, err := downloader.Download(context.Background(), file, &s3.GetObjectInput{
-				Bucket: aws.String(bucket),
-				Key:    aws.String(s3Key),
-			})
-			return err
-		}, "Download", retries)
+		return performS3Download(context.Background(), downloader, bucket, s3Key, file)
 	}
 
 	return nil
