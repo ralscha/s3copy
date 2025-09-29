@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 func uploadToS3(ctx context.Context) error {
@@ -169,7 +171,13 @@ func uploadDirectory(uploader *manager.Uploader, localDir, s3Prefix string) erro
 }
 
 func uploadFile(uploader *manager.Uploader, filePath, s3Key string) error {
-	logInfo("Uploading %s to s3://%s/%s\n", filePath, bucket, s3Key)
+	return uploadFileWithParams(context.Background(), uploader, bucket, s3Key, filePath, true)
+}
+
+func uploadFileWithParams(ctx context.Context, uploader *manager.Uploader, bucketName, s3Key, filePath string, checkSkipExisting bool) error {
+	if checkSkipExisting {
+		logInfo("Uploading %s to s3://%s/%s\n", filePath, bucketName, s3Key)
+	}
 
 	if dryRun {
 		return nil
@@ -184,12 +192,12 @@ func uploadFile(uploader *manager.Uploader, filePath, s3Key string) error {
 		}
 	}
 
-	if skipExisting && !encrypt && localMD5 != "" {
-		s3Client, err := getS3Client(context.Background())
+	if checkSkipExisting && skipExisting && !encrypt && localMD5 != "" {
+		s3Client, err := getS3Client(ctx)
 		if err != nil {
 			logVerbose("Warning: Could not get S3 client for checksum check: %v\n", err)
 		} else {
-			skip, err := compareFileChecksums(context.Background(), s3Client, bucket, s3Key, localMD5)
+			skip, err := compareFileChecksums(ctx, s3Client, bucketName, s3Key, localMD5)
 			if err != nil {
 				logVerbose("Warning: %v\n", err)
 			} else if skip {
@@ -205,23 +213,52 @@ func uploadFile(uploader *manager.Uploader, filePath, s3Key string) error {
 	defer closeWithLog(file, filePath)
 
 	var reader io.Reader = file
-	var metadata map[string]string
 
 	if encrypt {
-		reader, _, errChan := setupEncryptionPipe(file)
+		pipeReader, pipeWriter := io.Pipe()
+		reader = pipeReader
 
-		if err := performS3Upload(context.Background(), uploader, bucket, s3Key, reader, encrypt, nil); err != nil {
+		errChan := make(chan error, 1)
+		go func() {
+			defer closeWithLog(pipeWriter, "pipe writer")
+			errChan <- encryptStream(pipeWriter, file)
+		}()
+
+		uploadErr := retryOperation(func() error {
+			_, err := uploader.Upload(ctx, &s3.PutObjectInput{
+				Bucket: aws.String(bucketName),
+				Key:    aws.String(s3Key),
+				Body:   reader,
+			})
 			return err
+		}, "Upload", retries)
+
+		if uploadErr != nil {
+			return uploadErr
 		}
 
 		if encErr := <-errChan; encErr != nil {
 			return fmt.Errorf("encryption failed: %v", encErr)
 		}
 	} else {
-		if localMD5 != "" {
-			metadata = map[string]string{"local-md5": localMD5}
+		uploadInput := &s3.PutObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(s3Key),
+			Body:   reader,
 		}
-		return performS3Upload(context.Background(), uploader, bucket, s3Key, reader, encrypt, metadata)
+		if localMD5 != "" {
+			uploadInput.Metadata = map[string]string{
+				"local-md5": localMD5,
+			}
+		}
+
+		err = retryOperation(func() error {
+			_, err := uploader.Upload(ctx, uploadInput)
+			return err
+		}, "Upload", retries)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -494,133 +493,11 @@ func deleteS3Files(ctx context.Context, s3Client *s3.Client, bucket string, file
 }
 
 func downloadSingleFile(ctx context.Context, downloader *manager.Downloader, bucket, key, destPath string) error {
-	if encrypt {
-		tempFile, err := os.CreateTemp(filepath.Dir(destPath), ".s3copy-tmp-*")
-		if err != nil {
-			return fmt.Errorf("failed to create temp file: %v", err)
-		}
-		tempPath := tempFile.Name()
-		defer func() {
-			if err := os.Remove(tempPath); err != nil {
-				fmt.Printf("Warning: failed to remove temp file %s: %v\n", tempPath, err)
-			}
-		}()
-
-		err = retryOperation(func() error {
-			_, err := downloader.Download(ctx, tempFile, &s3.GetObjectInput{
-				Bucket: aws.String(bucket),
-				Key:    aws.String(key),
-			})
-			return err
-		}, "Download", retries)
-
-		closeWithLog(tempFile, tempPath)
-
-		if err != nil {
-			return err
-		}
-
-		tempFileRead, err := os.Open(tempPath)
-		if err != nil {
-			return fmt.Errorf("failed to open temp file for decryption: %v", err)
-		}
-		defer closeWithLog(tempFileRead, tempPath)
-
-		outFile, err := os.Create(destPath)
-		if err != nil {
-			return fmt.Errorf("failed to create file %s: %v", destPath, err)
-		}
-		defer closeWithLog(outFile, destPath)
-
-		if err := decryptStreamFromReader(outFile, tempFileRead); err != nil {
-			return fmt.Errorf("decryption failed: %v", err)
-		}
-	} else {
-		file, err := os.Create(destPath)
-		if err != nil {
-			return err
-		}
-		defer closeWithLog(file, destPath)
-
-		err = retryOperation(func() error {
-			_, err := downloader.Download(ctx, file, &s3.GetObjectInput{
-				Bucket: aws.String(bucket),
-				Key:    aws.String(key),
-			})
-			return err
-		}, "Download", retries)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return downloadFileWithParams(ctx, downloader, bucket, key, destPath, false)
 }
 
 func uploadSingleFile(ctx context.Context, uploader *manager.Uploader, bucket, key, filePath string) error {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return err
-	}
-	defer closeWithLog(file, filePath)
-
-	var reader io.Reader = file
-
-	var localMD5 string
-	if !encrypt {
-		if md5Hash, err := calculateFileMD5(filePath); err == nil {
-			localMD5 = md5Hash
-		}
-	}
-
-	if encrypt {
-		pipeReader, pipeWriter := io.Pipe()
-		reader = pipeReader
-
-		errChan := make(chan error, 1)
-		go func() {
-			defer closeWithLog(pipeWriter, "pipe writer")
-			errChan <- encryptStream(pipeWriter, file)
-		}()
-
-		uploadErr := retryOperation(func() error {
-			_, err := uploader.Upload(ctx, &s3.PutObjectInput{
-				Bucket: aws.String(bucket),
-				Key:    aws.String(key),
-				Body:   reader,
-			})
-			return err
-		}, "Upload", retries)
-
-		if uploadErr != nil {
-			return uploadErr
-		}
-
-		if encErr := <-errChan; encErr != nil {
-			return fmt.Errorf("encryption failed: %v", encErr)
-		}
-	} else {
-		uploadInput := &s3.PutObjectInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(key),
-			Body:   reader,
-		}
-		if localMD5 != "" {
-			uploadInput.Metadata = map[string]string{
-				"local-md5": localMD5,
-			}
-		}
-
-		err = retryOperation(func() error {
-			_, err := uploader.Upload(ctx, uploadInput)
-			return err
-		}, "Upload", retries)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return uploadFileWithParams(ctx, uploader, bucket, key, filePath, false)
 }
 
 func printSyncSummary(result SyncResult) {

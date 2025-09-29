@@ -10,8 +10,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
@@ -137,48 +135,6 @@ func closeWithLog(closer io.Closer, resourceName string) {
 	if err := closer.Close(); err != nil {
 		logVerbose("Warning: failed to close %s: %v\n", resourceName, err)
 	}
-}
-
-// performS3Upload performs an S3 upload operation with optional encryption
-func performS3Upload(ctx context.Context, uploader *manager.Uploader, bucket, key string, reader io.Reader, encrypt bool, metadata map[string]string) error {
-	uploadInput := &s3.PutObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-		Body:   reader,
-	}
-
-	if len(metadata) > 0 {
-		uploadInput.Metadata = metadata
-	}
-
-	return retryOperation(func() error {
-		_, err := uploader.Upload(ctx, uploadInput)
-		return err
-	}, "Upload", retries)
-}
-
-// performS3Download performs an S3 download operation with optional decryption
-func performS3Download(ctx context.Context, downloader *manager.Downloader, bucket, key string, writer io.WriterAt) error {
-	return retryOperation(func() error {
-		_, err := downloader.Download(ctx, writer, &s3.GetObjectInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(key),
-		})
-		return err
-	}, "Download", retries)
-}
-
-// setupEncryptionPipe creates a pipe for encryption and returns reader, writer, and error channel
-func setupEncryptionPipe(sourceReader io.Reader) (io.Reader, *io.PipeWriter, chan error) {
-	pipeReader, pipeWriter := io.Pipe()
-	errChan := make(chan error, 1)
-
-	go func() {
-		defer closeWithLog(pipeWriter, "encryption pipe writer")
-		errChan <- encryptStream(pipeWriter, sourceReader)
-	}()
-
-	return pipeReader, pipeWriter, errChan
 }
 
 // compareFileChecksums compares local file checksum with S3 object checksum

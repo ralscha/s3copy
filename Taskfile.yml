@@ -60,6 +60,6 @@ tasks:
 
   release:
     cmds:
-      - git tag -a v1.1.0 -m "Release v1.1.0"
-      - git push origin v1.1.0
+      - git tag -a v1.2.0 -m "Release v1.2.0"
+      - git push origin v1.2.0
       - goreleaser release

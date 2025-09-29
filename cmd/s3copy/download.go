@@ -107,23 +107,29 @@ func downloadFromS3(ctx context.Context) error {
 }
 
 func downloadFile(downloader *manager.Downloader, s3Key, localPath string) error {
-	logInfo("Downloading s3://%s/%s to %s\n", bucket, s3Key, localPath)
+	return downloadFileWithParams(context.Background(), downloader, bucket, s3Key, localPath, true)
+}
+
+func downloadFileWithParams(ctx context.Context, downloader *manager.Downloader, bucketName, s3Key, localPath string, checkSkipExisting bool) error {
+	if checkSkipExisting {
+		logInfo("Downloading s3://%s/%s to %s\n", bucketName, s3Key, localPath)
+	}
 
 	if dryRun {
 		return nil
 	}
 
-	if skipExisting && !encrypt {
+	if checkSkipExisting && skipExisting && !encrypt {
 		if _, err := os.Stat(localPath); err == nil {
 			localMD5, err := calculateFileMD5(localPath)
 			if err != nil {
 				logVerbose("Warning: Could not calculate MD5 for local file %s: %v\n", localPath, err)
 			} else {
-				s3Client, err := getS3Client(context.Background())
+				s3Client, err := getS3Client(ctx)
 				if err != nil {
 					logVerbose("Warning: Could not get S3 client for checksum check: %v\n", err)
 				} else {
-					skip, err := compareFileChecksums(context.Background(), s3Client, bucket, s3Key, localMD5)
+					skip, err := compareFileChecksums(ctx, s3Client, bucketName, s3Key, localMD5)
 					if err != nil {
 						logVerbose("Warning: %v\n", err)
 					} else if skip {
@@ -147,11 +153,19 @@ func downloadFile(downloader *manager.Downloader, s3Key, localPath string) error
 			}
 		}()
 
-		if err := performS3Download(context.Background(), downloader, bucket, s3Key, tempFile); err != nil {
-			closeWithLog(tempFile, tempPath)
+		err = retryOperation(func() error {
+			_, err := downloader.Download(ctx, tempFile, &s3.GetObjectInput{
+				Bucket: aws.String(bucketName),
+				Key:    aws.String(s3Key),
+			})
+			return err
+		}, "Download", retries)
+
+		closeWithLog(tempFile, tempPath)
+
+		if err != nil {
 			return err
 		}
-		closeWithLog(tempFile, tempPath)
 
 		tempFileRead, err := os.Open(tempPath)
 		if err != nil {
@@ -175,7 +189,14 @@ func downloadFile(downloader *manager.Downloader, s3Key, localPath string) error
 		}
 		defer closeWithLog(file, localPath)
 
-		if err := performS3Download(context.Background(), downloader, bucket, s3Key, file); err != nil {
+		err = retryOperation(func() error {
+			_, err := downloader.Download(ctx, file, &s3.GetObjectInput{
+				Bucket: aws.String(bucketName),
+				Key:    aws.String(s3Key),
+			})
+			return err
+		}, "Download", retries)
+		if err != nil {
 			return err
 		}
 	}
