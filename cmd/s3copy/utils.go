@@ -43,15 +43,25 @@ func retryOperation(operation func() error, operationType string, maxAttempts in
 
 // runWorkerPool executes tasks using a worker pool pattern
 func runWorkerPool[T any](tasks []T, maxWorkers int, worker func(T) error) error {
-	taskChan := make(chan T, len(tasks))
-	errChan := make(chan error, len(tasks))
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	bufferSize := min(maxWorkers*2, len(tasks))
+	taskChan := make(chan T, bufferSize)
+	errChan := make(chan error, 1) // Only need to capture first error
 	var wg sync.WaitGroup
 
-	for i := 0; i < maxWorkers && i < len(tasks); i++ {
+	numWorkers := min(maxWorkers, len(tasks))
+
+	for range numWorkers {
 		wg.Go(func() {
 			for task := range taskChan {
 				if err := worker(task); err != nil {
-					errChan <- err
+					select {
+					case errChan <- err:
+					default:
+					}
 					return
 				}
 			}

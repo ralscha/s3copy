@@ -172,7 +172,7 @@ func downloadFile(downloader *manager.Downloader, s3Key, localPath string) error
 					Key:    aws.String(s3Key),
 				})
 			return err
-		}, "Download", 3)
+		}, "Download", retries)
 
 		_ = pipeWriter.Close()
 
@@ -190,7 +190,7 @@ func downloadFile(downloader *manager.Downloader, s3Key, localPath string) error
 				Key:    aws.String(s3Key),
 			})
 			return err
-		}, "Download", 3)
+		}, "Download", retries)
 	}
 
 	return nil

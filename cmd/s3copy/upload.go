@@ -177,33 +177,37 @@ func uploadFile(uploader *manager.Uploader, filePath, s3Key string) error {
 		return nil
 	}
 
-	if skipExisting && !encrypt {
-		localMD5, err := calculateFileMD5(filePath)
-		if err != nil {
-			logVerbose("Warning: Could not calculate MD5 for %s: %v\n", filePath, err)
+	var localMD5 string
+	if !encrypt {
+		if md5Hash, err := calculateFileMD5(filePath); err == nil {
+			localMD5 = md5Hash
 		} else {
-			s3Client, err := getS3Client(context.Background())
+			logVerbose("Warning: Could not calculate MD5 for %s: %v\n", filePath, err)
+		}
+	}
+
+	if skipExisting && !encrypt && localMD5 != "" {
+		s3Client, err := getS3Client(context.Background())
+		if err != nil {
+			logVerbose("Warning: Could not get S3 client for checksum check: %v\n", err)
+		} else {
+			exists, etag, metadata, err := checkS3ObjectExists(context.Background(), s3Client, bucket, s3Key)
 			if err != nil {
-				logVerbose("Warning: Could not get S3 client for checksum check: %v\n", err)
-			} else {
-				exists, etag, metadata, err := checkS3ObjectExists(context.Background(), s3Client, bucket, s3Key)
-				if err != nil {
-					logVerbose("Warning: Could not check S3 object existence for %s: %v\n", s3Key, err)
-				} else if exists {
-					if etag == localMD5 {
-						logInfo("Skipping %s (already exists with same checksum via ETag)\n", s3Key)
+				logVerbose("Warning: Could not check S3 object existence for %s: %v\n", s3Key, err)
+			} else if exists {
+				if etag == localMD5 {
+					logInfo("Skipping %s (already exists with same checksum via ETag)\n", s3Key)
+					return nil
+				}
+				if storedMD5, exists := metadata["local-md5"]; exists {
+					if storedMD5 == localMD5 {
+						logInfo("Skipping %s (already exists with same checksum via metadata)\n", s3Key)
 						return nil
-					}
-					if storedMD5, exists := metadata["local-md5"]; exists {
-						if storedMD5 == localMD5 {
-							logInfo("Skipping %s (already exists with same checksum via metadata)\n", s3Key)
-							return nil
-						} else {
-							logVerbose("Object exists but checksum differs (local: %s, metadata: %s, etag: %s)\n", localMD5, storedMD5, etag)
-						}
 					} else {
-						logVerbose("Object exists but no local MD5 in metadata, will upload (local: %s, etag: %s)\n", localMD5, etag)
+						logVerbose("Object exists but checksum differs (local: %s, metadata: %s, etag: %s)\n", localMD5, storedMD5, etag)
 					}
+				} else {
+					logVerbose("Object exists but no local MD5 in metadata, will upload (local: %s, etag: %s)\n", localMD5, etag)
 				}
 			}
 		}
@@ -216,13 +220,6 @@ func uploadFile(uploader *manager.Uploader, filePath, s3Key string) error {
 	defer func() { _ = file.Close() }()
 
 	var reader io.Reader = file
-
-	var localMD5 string
-	if !encrypt {
-		if md5Hash, err := calculateFileMD5(filePath); err == nil {
-			localMD5 = md5Hash
-		}
-	}
 
 	if encrypt {
 		pipeReader, pipeWriter := io.Pipe()
@@ -243,7 +240,7 @@ func uploadFile(uploader *manager.Uploader, filePath, s3Key string) error {
 		if err := retryOperation(func() error {
 			_, err := uploader.Upload(context.Background(), uploadInput)
 			return err
-		}, "Upload", 3); err != nil {
+		}, "Upload", retries); err != nil {
 			return err
 		}
 
@@ -270,7 +267,7 @@ func uploadFile(uploader *manager.Uploader, filePath, s3Key string) error {
 		if err := retryOperation(func() error {
 			_, err := uploader.Upload(context.Background(), uploadInput)
 			return err
-		}, "Upload", 3); err != nil {
+		}, "Upload", retries); err != nil {
 			return err
 		}
 	}

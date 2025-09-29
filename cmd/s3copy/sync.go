@@ -525,7 +525,7 @@ func downloadSingleFile(ctx context.Context, downloader *manager.Downloader, buc
 					Key:    aws.String(key),
 				})
 			return err
-		}, "Download", 3)
+		}, "Download", retries)
 
 		if closeErr := pipeWriter.Close(); closeErr != nil {
 			fmt.Printf("Warning: failed to close pipe writer: %v\n", closeErr)
@@ -539,10 +539,13 @@ func downloadSingleFile(ctx context.Context, downloader *manager.Downloader, buc
 			return fmt.Errorf("decryption failed: %v", decErr)
 		}
 	} else {
-		_, err = downloader.Download(ctx, file, &s3.GetObjectInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(key),
-		})
+		err = retryOperation(func() error {
+			_, err := downloader.Download(ctx, file, &s3.GetObjectInput{
+				Bucket: aws.String(bucket),
+				Key:    aws.String(key),
+			})
+			return err
+		}, "Download", retries)
 		if err != nil {
 			return err
 		}
@@ -592,7 +595,7 @@ func uploadSingleFile(ctx context.Context, uploader *manager.Uploader, bucket, k
 				Body:   reader,
 			})
 			return err
-		}, "Upload", 3)
+		}, "Upload", retries)
 
 		if uploadErr != nil {
 			return uploadErr
@@ -613,7 +616,10 @@ func uploadSingleFile(ctx context.Context, uploader *manager.Uploader, bucket, k
 			}
 		}
 
-		_, err = uploader.Upload(ctx, uploadInput)
+		err = retryOperation(func() error {
+			_, err := uploader.Upload(ctx, uploadInput)
+			return err
+		}, "Upload", retries)
 		if err != nil {
 			return err
 		}
