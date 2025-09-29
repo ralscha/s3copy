@@ -74,7 +74,7 @@ func captureStdout(fn func()) string {
 
 	fn()
 
-	_ = w.Close()
+	closeWithLog(w, "captured stdout")
 	os.Stdout = oldStdout
 
 	var buf bytes.Buffer

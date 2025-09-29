@@ -29,7 +29,7 @@ func calculateFileMD5(filePath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = file.Close() }()
+	defer closeWithLog(file, filePath)
 
 	hash := md5.New()
 	if _, err := io.Copy(hash, file); err != nil {

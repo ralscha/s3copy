@@ -172,11 +172,7 @@ func TestSyncLocalToS3(t *testing.T) {
 			Key:    aws.String("sync-test/file1.txt"),
 		})
 		require.NoError(t, err)
-		defer func() {
-			if closeErr := obj.Body.Close(); closeErr != nil {
-				t.Logf("Warning: failed to close response body: %v", closeErr)
-			}
-		}()
+		defer closeWithLog(obj.Body, "response body")
 
 		content := make([]byte, len(newContent)+10) // Buffer a bit larger to handle any extra data
 		n, err := obj.Body.Read(content)
@@ -564,9 +560,7 @@ func TestSyncLargeFiles(t *testing.T) {
 			}
 			_, err = file.Write(data)
 			require.NoError(t, err)
-			if closeErr := file.Close(); closeErr != nil {
-				t.Fatalf("Failed to close file: %v", closeErr)
-			}
+			closeWithLog(file, "test file")
 		}
 
 		source = tempDir
@@ -708,11 +702,7 @@ func TestSyncErrorHandling(t *testing.T) {
 				Key:    aws.String("special-chars/" + filename),
 			})
 			require.NoError(t, err)
-			defer func() {
-				if closeErr := obj.Body.Close(); closeErr != nil {
-					t.Logf("Warning: failed to close response body: %v", closeErr)
-				}
-			}()
+			defer closeWithLog(obj.Body, "response body")
 
 			content := make([]byte, len(expectedContent)+10)
 			n, err := obj.Body.Read(content)

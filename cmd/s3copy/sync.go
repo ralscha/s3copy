@@ -514,9 +514,7 @@ func downloadSingleFile(ctx context.Context, downloader *manager.Downloader, buc
 			return err
 		}, "Download", retries)
 
-		if closeErr := tempFile.Close(); closeErr != nil {
-			fmt.Printf("Warning: failed to close temp file: %v\n", closeErr)
-		}
+		closeWithLog(tempFile, tempPath)
 
 		if err != nil {
 			return err
@@ -526,21 +524,13 @@ func downloadSingleFile(ctx context.Context, downloader *manager.Downloader, buc
 		if err != nil {
 			return fmt.Errorf("failed to open temp file for decryption: %v", err)
 		}
-		defer func() {
-			if closeErr := tempFileRead.Close(); closeErr != nil {
-				fmt.Printf("Warning: failed to close temp file: %v\n", closeErr)
-			}
-		}()
+		defer closeWithLog(tempFileRead, tempPath)
 
 		outFile, err := os.Create(destPath)
 		if err != nil {
 			return fmt.Errorf("failed to create file %s: %v", destPath, err)
 		}
-		defer func() {
-			if closeErr := outFile.Close(); closeErr != nil {
-				fmt.Printf("Warning: failed to close file %s: %v\n", destPath, closeErr)
-			}
-		}()
+		defer closeWithLog(outFile, destPath)
 
 		if err := decryptStreamFromReader(outFile, tempFileRead); err != nil {
 			return fmt.Errorf("decryption failed: %v", err)
@@ -550,11 +540,7 @@ func downloadSingleFile(ctx context.Context, downloader *manager.Downloader, buc
 		if err != nil {
 			return err
 		}
-		defer func() {
-			if closeErr := file.Close(); closeErr != nil {
-				fmt.Printf("Warning: failed to close file %s: %v\n", destPath, closeErr)
-			}
-		}()
+		defer closeWithLog(file, destPath)
 
 		err = retryOperation(func() error {
 			_, err := downloader.Download(ctx, file, &s3.GetObjectInput{
@@ -576,11 +562,7 @@ func uploadSingleFile(ctx context.Context, uploader *manager.Uploader, bucket, k
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if closeErr := file.Close(); closeErr != nil {
-			fmt.Printf("Warning: failed to close file %s: %v\n", filePath, closeErr)
-		}
-	}()
+	defer closeWithLog(file, filePath)
 
 	var reader io.Reader = file
 
@@ -597,11 +579,7 @@ func uploadSingleFile(ctx context.Context, uploader *manager.Uploader, bucket, k
 
 		errChan := make(chan error, 1)
 		go func() {
-			defer func() {
-				if closeErr := pipeWriter.Close(); closeErr != nil {
-					fmt.Printf("Warning: failed to close pipe writer: %v\n", closeErr)
-				}
-			}()
+			defer closeWithLog(pipeWriter, "pipe writer")
 			errChan <- encryptStream(pipeWriter, file)
 		}()
 

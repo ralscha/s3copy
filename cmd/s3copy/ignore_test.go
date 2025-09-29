@@ -40,7 +40,7 @@ func TestInitializeIgnoreMatcher(t *testing.T) {
 
 		_, err = tempFile.WriteString("*.bak\n# comment\n*.old\n")
 		require.NoError(t, err)
-		_ = tempFile.Close()
+		closeWithLog(tempFile, "ignore file")
 
 		ignorePatterns = ""
 		ignoreFile = tempFile.Name()
@@ -64,7 +64,7 @@ func TestReadIgnoreFile(t *testing.T) {
 		content := "*.tmp\n\n# comment\n*.log\n"
 		_, err = tempFile.WriteString(content)
 		require.NoError(t, err)
-		_ = tempFile.Close()
+		closeWithLog(tempFile, "ignore file")
 
 		patterns, err := readIgnoreFile(tempFile.Name())
 		assert.NoError(t, err)

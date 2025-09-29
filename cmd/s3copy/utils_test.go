@@ -63,7 +63,7 @@ func TestCalculateFileMD5(t *testing.T) {
 		testContent := "Hello, World!\nThis is a test file.\n"
 		_, err = tmpFile.WriteString(testContent)
 		require.NoError(t, err)
-		_ = tmpFile.Close()
+		closeWithLog(tmpFile, "test file")
 
 		hash, err := calculateFileMD5(tmpFile.Name())
 		require.NoError(t, err)
