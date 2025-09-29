@@ -38,99 +38,45 @@ You can also specify a custom `.env` file path using the `--env` flag.
 
 ## Usage
 
-### Basic Commands
+### Basic Operations
 
-Upload a file to S3 storage:
 ```bash
+# Upload a file
 ./s3copy -s localfile.txt -d s3://mybucket/path/file.txt
-```
 
-Download a file from S3 storage:
-```bash
+# Download a file
 ./s3copy -s s3://mybucket/path/file.txt -d localfile.txt
-```
 
-### Advanced Usage
-
-Upload with encryption:
-```bash
-./s3copy -s localfile.txt -d s3://mybucket/encrypted_file.txt -e
-```
-
-Upload with password provided:
-```bash
-./s3copy -s localfile.txt -d s3://mybucket/encrypted_file.txt -e -p mypassword
-```
-
-Upload directory recursively:
-```bash
+# Upload directory recursively
 ./s3copy -s ./my_folder -d s3://mybucket/backup/ -r
-```
 
-Upload with glob pattern:
-```bash
-./s3copy -s "*.txt" -d s3://mybucket/text_files/
-```
-
-Upload directory with encryption:
-```bash
-./s3copy -s ./my_folder -d s3://mybucket/encrypted_backup/ -r -e
-```
-
-Force overwrite files even if they already exist with same checksum:
-```bash
-./s3copy -s ./my_folder -d s3://mybucket/backup/ -r --force
-```
-
-Download encrypted file:
-```bash
-./s3copy -s s3://mybucket/encrypted_file.txt -d decrypted_file.txt -e
-```
-
-Dry run upload:
-```bash
-./s3copy -s ./my_folder -d s3://mybucket/backup/ -r --dry-run
-```
-
-Quiet operation:
-```bash
-./s3copy -s file.txt -d s3://mybucket/file.txt --quiet
-```
-
-### Single Copy Mode
-
-When copying single files (not directories), s3copy provides intelligent path handling:
-
-#### Upload to S3 Directory
-When the S3 destination ends with `/`, the source filename is automatically appended:
-```bash
-# Upload localfile.txt to s3://mybucket/documents/localfile.txt
-./s3copy -s localfile.txt -d s3://mybucket/documents/
-
-# Upload report.pdf to s3://mybucket/reports/2023/report.pdf
-./s3copy -s report.pdf -d s3://mybucket/reports/2023/
-```
-
-#### Download to Local Directory
-When downloading to a local directory (`.`, `./`, or existing directory), the S3 key filename is used:
-```bash
-# Download s3://mybucket/path/to/file.txt to ./file.txt
-./s3copy -s s3://mybucket/path/to/file.txt -d ./
-
-# Download s3://mybucket/documents/report.pdf to /home/user/downloads/report.pdf
-./s3copy -s s3://mybucket/documents/report.pdf -d /home/user/downloads/
-```
-
-This behavior only applies to single file operations. For directory operations (`-r` flag), the full path structure is preserved.
-
-Verbose output with retries:
-```bash
-./s3copy -s large_file.zip -d s3://mybucket/large_file.zip --verbose --retries 5
-```
-
-Download entire bucket prefix:
-```bash
+# Download directory
 ./s3copy -s s3://mybucket/backup/ -d ./restored_files/
+
+# Upload with encryption
+./s3copy -s localfile.txt -d s3://mybucket/encrypted_file.txt -e -p mypassword
+
+# Upload with glob pattern
+./s3copy -s "*.txt" -d s3://mybucket/text_files/
+
+# List bucket contents
+./s3copy --list -b my-bucket --filter "documents/" --detailed
+```
+
+### Smart Path Handling
+
+When copying single files (not directories), intelligent path handling is applied:
+
+**Uploading to S3 directory** - When destination ends with `/`, source filename is appended:
+```bash
+./s3copy -s localfile.txt -d s3://mybucket/documents/
+# Results in: s3://mybucket/documents/localfile.txt
+```
+
+**Downloading to local directory** - When destination is `.`, `./`, or existing directory, S3 filename is used:
+```bash
+./s3copy -s s3://mybucket/path/to/file.txt -d ./
+# Results in: ./file.txt
 ```
 
 ### Command Line Flags
@@ -169,40 +115,15 @@ By default, s3copy performs intelligent uploading/downloading by comparing file 
    - **Default behavior**: Files with matching checksums are automatically skipped
    - **With --force flag**: Files are uploaded/downloaded even if checksums match
 
-### Force Overwrite
-
-Use the `--force` (or `--force-overwrite`) flag to bypass checksum checking and always overwrite files:
-
-```bash
-# Force upload even if file exists with same content
-./s3copy -s ./my_file.txt -d s3://mybucket/my_file.txt --force
-
-# Force download even if local file matches
-./s3copy -s s3://mybucket/my_file.txt -d ./my_file.txt --force
-```
-
-### Limitations
-
-- **Encryption**: Checksum checking is disabled when using encryption (`--encrypt`)
-- **Performance**: Checksum comparison adds a small overhead but saves bandwidth for unchanged files
+Use the `--force` flag to bypass checksum checking and always overwrite files. Note that checksum checking is automatically disabled when using encryption.
 
 ## Sync Mode
 
 Sync mode ensures that the destination directory looks exactly like the source directory. The source is always treated as the master, and the destination is modified to match it. This feature is ideal for creating and maintaining exact replicas of directories.
 
-### How Sync Mode Works
-
-1. **Comparison**: Lists all files in both source and destination directories
-2. **Analysis**: Compares files by size and MD5 checksums to identify differences
-3. **One-Way Synchronization**: 
-   - Copies files that exist in source but not in destination
-   - Updates files in destination that differ from source
-   - Deletes files in destination that don't exist in source
-4. **Summary**: Provides a detailed report of all operations performed
+Sync mode makes the destination directory exactly match the source directory through one-way synchronization. It compares files by size and checksums, then copies new/updated files and deletes files that don't exist in source.
 
 ### Usage Examples
-
-#### Sync Local Directory to S3 (Local is Master)
 ```bash
 # Make S3 bucket exactly match local directory
 ./s3copy --sync -s ./local_folder -d s3://mybucket/backup/
@@ -214,33 +135,7 @@ Sync mode ensures that the destination directory looks exactly like the source d
 ./s3copy --sync -s ./project -d s3://mybucket/project-backup/ --ignore "*.log,node_modules/,build/"
 ```
 
-#### Sync S3 Directory to Local (S3 is Master)
-```bash
-# Make local folder exactly match S3 directory
-./s3copy --sync -s s3://mybucket/backup/ -d ./restored_folder
-
-
-### Sync Mode Features
-
-- **Directory Requirement**: Both source and destination must be directories
-- **Ignore Support**: Fully supports ignore patterns and ignore files
-- **Dry Run**: Use `--dry-run` to preview changes without making them
-- **Concurrent Operations**: Uses configurable worker pools for efficient transfers
-- **Detailed Reporting**: Shows uploaded, downloaded, deleted, and skipped files
-
-### Sync Mode Flags
-
-All regular flags work with sync mode, with these specific considerations:
-
-- `--sync`: Enable sync mode (required)
-- `--source`: Must be a directory path (local or S3)
-- `--destination`: Must be a directory path (local or S3)
-- `--dry-run`: Show what would be synchronized without making changes
-- `--ignore` / `--ignore-file`: Exclude files from synchronization
-- `--verbose`: Show detailed progress and file operations
-- `--max-workers`: Control concurrency for large sync operations
-
-### Important Notes
+**Important Notes:**
 
 - **One-Way Operation**: Source is always master; destination is modified to match source
 - **Destructive Operation**: Files in destination that don't exist in source will be deleted
@@ -250,19 +145,21 @@ All regular flags work with sync mode, with these specific considerations:
 
 ## File Filtering (Ignore Patterns)
 
-s3copy supports gitignore-style patterns to exclude files and directories from upload and sync operations. This is particularly useful for skipping temporary files, build artifacts, or sensitive data.
+s3copy supports gitignore-style patterns to exclude files and directories. Use `--ignore` for inline patterns or `--ignore-file` to load patterns from a file.
 
-### Using Command Line Patterns
+### Pattern Syntax
 
-```bash
-# Ignore specific file types
-./s3copy -s ./project -d s3://backup/project -r --ignore "*.log,*.tmp,node_modules/"
+- `*` - matches any characters except `/`
+- `**` - matches any characters including `/`
+- `?` - matches a single character except `/`
+- `[abc]` - matches any character in brackets
+- `!pattern` - negates the pattern (includes files)
+- `/pattern` - matches from root directory only
+- `pattern/` - matches directories only
+- `#` - comments
+- Empty lines are ignored
 
-# Ignore multiple patterns
-./s3copy -s ./project -d s3://backup/project -r --ignore "*.log,build/,dist/,.git/"
-```
-
-### Using Ignore Files
+### Usage Example
 
 Create an ignore file (e.g., `.s3ignore`) with patterns (one per line):
 
@@ -290,82 +187,14 @@ config.local.json
 /dist/
 ```
 
-Then use it:
-
-```bash
-./s3copy -s ./project -d s3://backup/project -r --ignore-file .s3ignore
-```
-
-### Ignore Pattern Syntax
-
-The tool supports standard gitignore syntax:
-
-- `*` - matches any number of characters except `/`
-- `**` - matches any number of characters including `/`
-- `?` - matches a single character except `/`
-- `[abc]` - matches any character in the brackets
-- `!pattern` - negates the pattern (includes files that would otherwise be ignored)
-- `/pattern` - matches from the root directory only
-- `pattern/` - matches directories only
-- Lines starting with `#` are comments
-- Empty lines are ignored
-
-### Examples with Ignore Patterns
-
-Upload a project while ignoring common build artifacts:
-```bash
-./s3copy -s ./my_project -d s3://backup/my_project -r --ignore "node_modules/,*.log,build/,dist/"
-```
-
-Upload with a comprehensive ignore file:
+Use it:
 ```bash
 ./s3copy -s ./my_project -d s3://backup/my_project -r --ignore-file .gitignore
 ```
 
-## Encryption Details
+## Encryption
 
-The tool uses the following encryption algorithms:
-
-- **Cipher**: ChaCha20-Poly1305 (authenticated encryption)
-- **Key Derivation**: Argon2id with the following parameters:
-  - Time: 3 iterations
-  - Memory: 64 MB
-  - Threads: 4
-  - Key length: 32 bytes
-- **Salt**: 32 random bytes per file
-- **Nonce**: 12 random bytes per file
-
-Each encrypted file contains: `[32-byte salt][12-byte nonce][encrypted data]`
-
-## Examples
-
-### Backup a project directory
-```bash
-./s3copy -s ./my_project -d s3://backups/my_project_$(date +%Y%m%d) -r -e
-```
-
-### Restore a backup
-```bash
-./s3copy -s s3://backups/my_project_20231201 -d ./restored_project -e
-```
-
-### Backup specific file types
-```bash
-./s3copy -s "*.go" -d s3://code-backup/go-files/ -e
-```
-
-### List and explore bucket contents
-```bash
-# List all objects in a bucket
-./s3copy --list -b my-bucket
-
-# List objects with specific prefix (like a folder)
-./s3copy --list -b my-bucket --filter "documents/"
-
-# List with detailed information including storage class and ETags
-./s3copy --list -b my-bucket --detailed
-
-```
+Encryption uses ChaCha20-Poly1305 (authenticated encryption) with Argon2id key derivation (3 iterations, 64 MB memory, 4 threads). Each encrypted file contains: `[32-byte salt][12-byte nonce][encrypted data]`
 
 ## License
 
