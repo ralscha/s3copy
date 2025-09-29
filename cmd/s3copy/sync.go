@@ -494,51 +494,64 @@ func deleteS3Files(ctx context.Context, s3Client *s3.Client, bucket string, file
 }
 
 func downloadSingleFile(ctx context.Context, downloader *manager.Downloader, bucket, key, destPath string) error {
-	file, err := os.Create(destPath)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if closeErr := file.Close(); closeErr != nil {
-			fmt.Printf("Warning: failed to close file %s: %v\n", destPath, closeErr)
-		}
-	}()
-
 	if encrypt {
-		pipeReader, pipeWriter := io.Pipe()
+		tempFile, err := os.CreateTemp(filepath.Dir(destPath), ".s3copy-tmp-*")
+		if err != nil {
+			return fmt.Errorf("failed to create temp file: %v", err)
+		}
+		tempPath := tempFile.Name()
+		defer os.Remove(tempPath) // Clean up temp file
 
-		decryptErr := make(chan error, 1)
-		go func() {
-			defer func() {
-				if closeErr := pipeReader.Close(); closeErr != nil {
-					fmt.Printf("Warning: failed to close pipe reader: %v\n", closeErr)
-				}
-			}()
-			decryptErr <- decryptStreamFromReader(file, pipeReader)
-		}()
-
-		downloadErr := retryOperation(func() error {
-			_, err := downloader.Download(ctx,
-				&writeAtWrapper{w: pipeWriter},
-				&s3.GetObjectInput{
-					Bucket: aws.String(bucket),
-					Key:    aws.String(key),
-				})
+		err = retryOperation(func() error {
+			_, err := downloader.Download(ctx, tempFile, &s3.GetObjectInput{
+				Bucket: aws.String(bucket),
+				Key:    aws.String(key),
+			})
 			return err
 		}, "Download", retries)
 
-		if closeErr := pipeWriter.Close(); closeErr != nil {
-			fmt.Printf("Warning: failed to close pipe writer: %v\n", closeErr)
+		if closeErr := tempFile.Close(); closeErr != nil {
+			fmt.Printf("Warning: failed to close temp file: %v\n", closeErr)
 		}
 
-		if downloadErr != nil {
-			return downloadErr
+		if err != nil {
+			return err
 		}
 
-		if decErr := <-decryptErr; decErr != nil {
-			return fmt.Errorf("decryption failed: %v", decErr)
+		tempFileRead, err := os.Open(tempPath)
+		if err != nil {
+			return fmt.Errorf("failed to open temp file for decryption: %v", err)
+		}
+		defer func() {
+			if closeErr := tempFileRead.Close(); closeErr != nil {
+				fmt.Printf("Warning: failed to close temp file: %v\n", closeErr)
+			}
+		}()
+
+		outFile, err := os.Create(destPath)
+		if err != nil {
+			return fmt.Errorf("failed to create file %s: %v", destPath, err)
+		}
+		defer func() {
+			if closeErr := outFile.Close(); closeErr != nil {
+				fmt.Printf("Warning: failed to close file %s: %v\n", destPath, closeErr)
+			}
+		}()
+
+		if err := decryptStreamFromReader(outFile, tempFileRead); err != nil {
+			return fmt.Errorf("decryption failed: %v", err)
 		}
 	} else {
+		file, err := os.Create(destPath)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if closeErr := file.Close(); closeErr != nil {
+				fmt.Printf("Warning: failed to close file %s: %v\n", destPath, closeErr)
+			}
+		}()
+
 		err = retryOperation(func() error {
 			_, err := downloader.Download(ctx, file, &s3.GetObjectInput{
 				Bucket: aws.String(bucket),

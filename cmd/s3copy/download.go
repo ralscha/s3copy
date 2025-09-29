@@ -3,11 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
@@ -137,48 +135,46 @@ func downloadFile(downloader *manager.Downloader, s3Key, localPath string) error
 		}
 	}
 
-	file, err := os.Create(localPath)
-	if err != nil {
-		return fmt.Errorf("failed to create file %s: %v", localPath, err)
-	}
-	defer closeWithLog(file, localPath)
-
 	if encrypt {
-		_, pipeWriter, decryptErr := setupDecryptionPipe(file)
-
-		downloadErr := performS3Download(context.Background(), downloader, bucket, s3Key, &writeAtWrapper{w: pipeWriter})
-		closeWithLog(pipeWriter, "decryption pipe writer")
-
-		if downloadErr != nil {
-			return downloadErr
+		tempFile, err := os.CreateTemp(filepath.Dir(localPath), ".s3copy-tmp-*")
+		if err != nil {
+			return fmt.Errorf("failed to create temp file: %v", err)
 		}
+		tempPath := tempFile.Name()
+		defer os.Remove(tempPath) // Clean up temp file
 
-		if err := <-decryptErr; err != nil {
+		if err := performS3Download(context.Background(), downloader, bucket, s3Key, tempFile); err != nil {
+			closeWithLog(tempFile, tempPath)
+			return err
+		}
+		closeWithLog(tempFile, tempPath)
+
+		tempFileRead, err := os.Open(tempPath)
+		if err != nil {
+			return fmt.Errorf("failed to open temp file for decryption: %v", err)
+		}
+		defer closeWithLog(tempFileRead, tempPath)
+
+		outFile, err := os.Create(localPath)
+		if err != nil {
+			return fmt.Errorf("failed to create file %s: %v", localPath, err)
+		}
+		defer closeWithLog(outFile, localPath)
+
+		if err := decryptStreamFromReader(outFile, tempFileRead); err != nil {
 			return fmt.Errorf("decryption failed: %v", err)
 		}
 	} else {
-		return performS3Download(context.Background(), downloader, bucket, s3Key, file)
+		file, err := os.Create(localPath)
+		if err != nil {
+			return fmt.Errorf("failed to create file %s: %v", localPath, err)
+		}
+		defer closeWithLog(file, localPath)
+
+		if err := performS3Download(context.Background(), downloader, bucket, s3Key, file); err != nil {
+			return err
+		}
 	}
 
 	return nil
-}
-
-// writeAtWrapper wraps an io.Writer to implement io.WriterAt for sequential writes
-type writeAtWrapper struct {
-	w      io.Writer
-	offset int64
-	mu     sync.Mutex
-}
-
-func (w *writeAtWrapper) WriteAt(p []byte, off int64) (n int, err error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	if off != w.offset {
-		return 0, fmt.Errorf("non-sequential write at offset %d, expected %d", off, w.offset)
-	}
-
-	n, err = w.w.Write(p)
-	w.offset += int64(n)
-	return n, err
 }
