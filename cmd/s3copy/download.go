@@ -141,7 +141,11 @@ func downloadFile(downloader *manager.Downloader, s3Key, localPath string) error
 			return fmt.Errorf("failed to create temp file: %v", err)
 		}
 		tempPath := tempFile.Name()
-		defer os.Remove(tempPath) // Clean up temp file
+		defer func() {
+			if err := os.Remove(tempPath); err != nil {
+				fmt.Printf("Warning: failed to remove temp file %s: %v\n", tempPath, err)
+			}
+		}()
 
 		if err := performS3Download(context.Background(), downloader, bucket, s3Key, tempFile); err != nil {
 			closeWithLog(tempFile, tempPath)

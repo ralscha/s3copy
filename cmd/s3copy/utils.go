@@ -181,19 +181,6 @@ func setupEncryptionPipe(sourceReader io.Reader) (io.Reader, *io.PipeWriter, cha
 	return pipeReader, pipeWriter, errChan
 }
 
-// setupDecryptionPipe creates a pipe for decryption and returns reader, writer, and error channel
-func setupDecryptionPipe(destinationWriter io.Writer) (*io.PipeReader, *io.PipeWriter, chan error) {
-	pipeReader, pipeWriter := io.Pipe()
-	errChan := make(chan error, 1)
-
-	go func() {
-		defer closeWithLog(pipeReader, "decryption pipe reader")
-		errChan <- decryptStreamFromReader(destinationWriter, pipeReader)
-	}()
-
-	return pipeReader, pipeWriter, errChan
-}
-
 // compareFileChecksums compares local file checksum with S3 object checksum
 func compareFileChecksums(ctx context.Context, s3Client *s3.Client, bucket, s3Key, localMD5 string) (bool, error) {
 	exists, etag, metadata, err := checkS3ObjectExists(ctx, s3Client, bucket, s3Key)
