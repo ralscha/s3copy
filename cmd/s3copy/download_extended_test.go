@@ -89,7 +89,7 @@ func TestDownloadFromS3WithSkipExisting(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	t.Run("skip existing file with same checksum", func(t *testing.T) {
+	t.Run("skip existing file with same checksum by default", func(t *testing.T) {
 		destDir := t.TempDir()
 		destFile := filepath.Join(destDir, "skip-test.txt")
 
@@ -97,10 +97,14 @@ func TestDownloadFromS3WithSkipExisting(t *testing.T) {
 		err := downloadFromS3(ctx)
 		require.NoError(t, err)
 
-		skipExisting = true
+		forceOverwrite = false
 		err = downloadFromS3(ctx)
 		assert.NoError(t, err)
-		skipExisting = false
+
+		forceOverwrite = true
+		err = downloadFromS3(ctx)
+		assert.NoError(t, err)
+		forceOverwrite = false
 	})
 }
 

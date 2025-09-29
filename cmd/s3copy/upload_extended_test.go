@@ -60,17 +60,21 @@ func TestUploadToS3WithSkipExisting(t *testing.T) {
 	err := os.WriteFile(testFile, testContent, 0644)
 	require.NoError(t, err)
 
-	t.Run("skip existing file with same checksum", func(t *testing.T) {
+	t.Run("skip existing file with same checksum by default", func(t *testing.T) {
 		s3Key := "skip-test-key.txt"
 
 		setTestConfig(testFile, fmt.Sprintf("s3://%s/%s", bucketName, s3Key), bucketName, false, false, true, false)
 		err := uploadToS3(ctx)
 		require.NoError(t, err)
 
-		skipExisting = true
+		forceOverwrite = false
 		err = uploadToS3(ctx)
 		assert.NoError(t, err)
-		skipExisting = false
+
+		forceOverwrite = true
+		err = uploadToS3(ctx)
+		assert.NoError(t, err)
+		forceOverwrite = false
 	})
 }
 

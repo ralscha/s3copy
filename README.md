@@ -77,9 +77,9 @@ Upload directory with encryption:
 ./s3copy -s ./my_folder -d s3://mybucket/encrypted_backup/ -r -e
 ```
 
-Upload with checksum checking (skip if file already exists with same content):
+Force overwrite files even if they already exist with same checksum:
 ```bash
-./s3copy -s ./my_folder -d s3://mybucket/backup/ -r --skip-existing
+./s3copy -s ./my_folder -d s3://mybucket/backup/ -r --force
 ```
 
 Download encrypted file:
@@ -153,23 +153,38 @@ Download entire bucket prefix:
 - `--verbose`: Enable verbose output
 - `--timeout`: Timeout for operations in seconds (0 for no timeout)
 - `--retries`: Number of retry attempts for failed operations (default: 3)
-- `--skip-existing`: Check if file already exists with same checksum before uploading/downloading. If true, skip the operation (default: false)
+- `--force, --force-overwrite`: Force overwrite files even if they exist with same checksum. By default, existing files with same checksum are skipped (default: false)
 - `--sync`: Enable sync mode to make destination directory exactly match source directory (one-way sync)
 
-## Checksum-Based Upload Optimization
+## Checksum-Based Skip Optimization
 
-The `--skip-existing` flag enables intelligent uploading/downloading by comparing file checksums before uploading/downloading. This feature helps avoid unnecessary uploads and downloads when files haven't changed.
+By default, s3copy performs intelligent uploading/downloading by comparing file checksums. This feature helps avoid unnecessary uploads and downloads when files haven't changed.
 
 ### How It Works
 
 1. **Local Checksum**: The tool calculates the MD5 checksum of the local file
 2. **Remote Check**: It checks if an S3 object exists at the destination path
 3. **Comparison**: If the object exists, it compares the remote ETag (MD5) with the local checksum
-4. **Skip or Upload**: Files with matching checksums are skipped; only changed files are uploaded
+4. **Skip or Upload**: 
+   - **Default behavior**: Files with matching checksums are automatically skipped
+   - **With --force flag**: Files are uploaded/downloaded even if checksums match
+
+### Force Overwrite
+
+Use the `--force` (or `--force-overwrite`) flag to bypass checksum checking and always overwrite files:
+
+```bash
+# Force upload even if file exists with same content
+./s3copy -s ./my_file.txt -d s3://mybucket/my_file.txt --force
+
+# Force download even if local file matches
+./s3copy -s s3://mybucket/my_file.txt -d ./my_file.txt --force
+```
 
 ### Limitations
 
 - **Encryption**: Checksum checking is disabled when using encryption (`--encrypt`)
+- **Performance**: Checksum comparison adds a small overhead but saves bandwidth for unchanged files
 
 ## Sync Mode
 
@@ -355,5 +370,3 @@ Each encrypted file contains: `[32-byte salt][12-byte nonce][encrypted data]`
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-

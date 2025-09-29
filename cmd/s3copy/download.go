@@ -119,7 +119,7 @@ func downloadFileWithParams(ctx context.Context, downloader *manager.Downloader,
 		return nil
 	}
 
-	if checkSkipExisting && skipExisting && !encrypt {
+	if checkSkipExisting && !forceOverwrite && !encrypt {
 		if _, err := os.Stat(localPath); err == nil {
 			localMD5, err := calculateFileMD5(localPath)
 			if err != nil {

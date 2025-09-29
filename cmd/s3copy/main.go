@@ -30,7 +30,7 @@ var (
 	verbose        bool
 	timeout        int
 	retries        int
-	skipExisting   bool
+	forceOverwrite bool
 	syncMode       bool
 )
 
@@ -146,9 +146,10 @@ Supports gitignore-style file filtering for selective copying.`,
 				Destination: &retries,
 			},
 			&cli.BoolFlag{
-				Name:        "skip-existing",
-				Usage:       "Check if file already exists with same checksum before uploading/downloading",
-				Destination: &skipExisting,
+				Name:        "force",
+				Aliases:     []string{"force-overwrite"},
+				Usage:       "Force overwrite files even if they exist with same checksum (by default, existing files with same checksum are skipped)",
+				Destination: &forceOverwrite,
 			},
 			&cli.BoolFlag{
 				Name:        "sync",

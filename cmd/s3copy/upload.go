@@ -192,7 +192,7 @@ func uploadFileWithParams(ctx context.Context, uploader *manager.Uploader, bucke
 		}
 	}
 
-	if checkSkipExisting && skipExisting && !encrypt && localMD5 != "" {
+	if checkSkipExisting && !forceOverwrite && !encrypt && localMD5 != "" {
 		s3Client, err := getS3Client(ctx)
 		if err != nil {
 			logVerbose("Warning: Could not get S3 client for checksum check: %v\n", err)
@@ -201,6 +201,7 @@ func uploadFileWithParams(ctx context.Context, uploader *manager.Uploader, bucke
 			if err != nil {
 				logVerbose("Warning: %v\n", err)
 			} else if skip {
+				logInfo("Skipping %s (file already exists on S3 with same checksum)\n", filePath)
 				return nil
 			}
 		}
