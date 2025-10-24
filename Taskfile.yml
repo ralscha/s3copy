@@ -50,11 +50,11 @@ tasks:
       - coverage.out
       - coverage.html
 
-  build:
+  build-all:
     cmds:
       - goreleaser build --single-target --snapshot
   
-  build-dev:
+  build:
     cmds:
       - go build -o s3copy{{.SUFFIX}} ./cmd/s3copy
 
