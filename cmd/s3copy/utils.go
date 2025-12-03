@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -135,6 +136,14 @@ func closeWithLog(closer io.Closer, resourceName string) {
 	if err := closer.Close(); err != nil {
 		logVerbose("Warning: failed to close %s: %v\n", resourceName, err)
 	}
+}
+
+func decodeS3Key(key string) string {
+	decoded, err := url.QueryUnescape(key)
+	if err != nil {
+		return key
+	}
+	return decoded
 }
 
 // compareFileChecksums compares local file checksum with S3 object checksum

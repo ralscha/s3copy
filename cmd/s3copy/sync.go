@@ -249,6 +249,8 @@ func listS3Files(ctx context.Context, s3Client *s3.Client, bucket, prefix string
 				continue
 			}
 
+			relPath = decodeS3Key(relPath)
+
 			var size int64
 			if obj.Size != nil {
 				size = *obj.Size

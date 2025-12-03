@@ -117,3 +117,64 @@ func TestLogFunctions(t *testing.T) {
 		assert.Empty(t, output)
 	})
 }
+
+func TestDecodeS3Key(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "no encoding needed",
+			input:    "simple/path/file.txt",
+			expected: "simple/path/file.txt",
+		},
+		{
+			name:     "German umlaut ö",
+			input:    "music/Melancholisch%20sch%C3%B6n/song.mp3",
+			expected: "music/Melancholisch schön/song.mp3",
+		},
+		{
+			name:     "German umlaut ü",
+			input:    "music/M%C3%BCnchen/file.mp3",
+			expected: "music/München/file.mp3",
+		},
+		{
+			name:     "German umlaut ä",
+			input:    "music/M%C3%A4rchen/file.mp3",
+			expected: "music/Märchen/file.mp3",
+		},
+		{
+			name:     "space encoded as %20",
+			input:    "path%20with%20spaces/file.txt",
+			expected: "path with spaces/file.txt",
+		},
+		{
+			name:     "space encoded as +",
+			input:    "path+with+plus/file.txt",
+			expected: "path with plus/file.txt",
+		},
+		{
+			name:     "mixed special characters",
+			input:    "2raumwohnung/Melancholisch%20sch%C3%B6n/track.mp3",
+			expected: "2raumwohnung/Melancholisch schön/track.mp3",
+		},
+		{
+			name:     "already decoded string",
+			input:    "music/Melancholisch schön/song.mp3",
+			expected: "music/Melancholisch schön/song.mp3",
+		},
+		{
+			name:     "invalid percent encoding - returns original",
+			input:    "invalid%ZZencoding",
+			expected: "invalid%ZZencoding",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := decodeS3Key(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
