@@ -43,11 +43,11 @@ func downloadFromS3(ctx context.Context) error {
 		finalDestination := destination
 
 		if strings.HasSuffix(destination, "/") || destination == "." || destination == "./" {
-			filename := decodeS3Key(filepath.Base(s3Key))
+			filename := filepath.Base(s3Key)
 			finalDestination = filepath.Join(destination, filename)
 		} else {
 			if info, err := os.Stat(destination); err == nil && info.IsDir() {
-				filename := decodeS3Key(filepath.Base(s3Key))
+				filename := filepath.Base(s3Key)
 				finalDestination = filepath.Join(destination, filename)
 			}
 		}
@@ -85,8 +85,6 @@ func downloadFromS3(ctx context.Context) error {
 		if relPath == "" {
 			relPath = filepath.Base(*obj.Key)
 		}
-
-		relPath = decodeS3Key(relPath)
 
 		localPath := filepath.Join(destination, relPath)
 
