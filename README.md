@@ -101,6 +101,7 @@ When copying single files (not directories), intelligent path handling is applie
 - `--retries`: Number of retry attempts for failed operations (default: 3)
 - `--force, --force-overwrite`: Force overwrite files even if they exist with same checksum. By default, existing files with same checksum are skipped (default: false)
 - `--sync`: Enable sync mode to make destination directory exactly match source directory (one-way sync)
+- `--sync-compare`: Sync compare strategy: `checksum` (default) or `size-time`
 
 ## Checksum-Based Skip Optimization
 
@@ -122,6 +123,18 @@ Use the `--force` flag to bypass checksum checking and always overwrite files. N
 Sync mode ensures that the destination directory looks exactly like the source directory. The source is always treated as the master, and the destination is modified to match it. This feature is ideal for creating and maintaining exact replicas of directories.
 
 Sync mode makes the destination directory exactly match the source directory through one-way synchronization. It compares files by size and checksums, then copies new/updated files and deletes files that don't exist in source.
+
+### Sync Compare Strategies
+
+- `checksum` (default): highest confidence, computes local MD5 and compares against S3 ETag/metadata.
+- `size-time`: faster for very large trees, compares file size and modification time metadata (`local-mtime`) to avoid hashing every local file.
+
+Example:
+
+```bash
+# Faster sync comparisons for large directory trees
+./s3copy --sync --sync-compare size-time -s ./local_folder -d s3://mybucket/backup/
+```
 
 ### Usage Examples
 ```bash
