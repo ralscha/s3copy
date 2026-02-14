@@ -55,6 +55,6 @@ tasks:
 
   release:
     cmds:
-      - git tag -a v1.2.0 -m "Release v1.2.0"
-      - git push origin v1.2.0
+      - git tag -a v1.3.0 -m "Release v1.3.0"
+      - git push origin v1.3.0
       - goreleaser release
