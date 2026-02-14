@@ -4,10 +4,10 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -37,26 +37,26 @@ func calculateFileMD5(filePath string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-// retryOperation executes an operation with retry logic
-func retryOperation(operation func() error, operationType string, maxAttempts int) error {
-	var lastErr error
-	for attempts := range maxAttempts {
-		lastErr = operation()
-		if lastErr == nil {
-			return nil
-		}
-		if attempts < maxAttempts-1 {
-			logVerbose("%s attempt %d failed, retrying...\n", operationType, attempts+1)
-		}
-	}
-	return fmt.Errorf("failed to %s after %d attempts: %v", strings.ToLower(operationType), maxAttempts, lastErr)
-}
-
 // runWorkerPool executes tasks using a worker pool pattern with context support
-func runWorkerPool[T any](tasks []T, maxWorkers int, worker func(T) error) error {
+func runWorkerPool[T any](ctx context.Context, tasks []T, maxWorkers int, worker func(context.Context, T) error) error {
 	if len(tasks) == 0 {
 		return nil
 	}
+
+	if maxWorkers < 1 {
+		return fmt.Errorf("max workers must be at least 1, got %d", maxWorkers)
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	bufferSize := min(maxWorkers*DefaultWorkerPoolBufferMultiplier, len(tasks))
 	taskChan := make(chan T, bufferSize)
@@ -67,20 +67,37 @@ func runWorkerPool[T any](tasks []T, maxWorkers int, worker func(T) error) error
 
 	for range numWorkers {
 		wg.Go(func() {
-			for task := range taskChan {
-				if err := worker(task); err != nil {
-					select {
-					case errChan <- err:
-					default:
-					}
+			for {
+				select {
+				case <-workerCtx.Done():
 					return
+				case task, ok := <-taskChan:
+					if !ok {
+						return
+					}
+					if err := worker(workerCtx, task); err != nil {
+						if errors.Is(err, context.Canceled) && workerCtx.Err() != nil {
+							return
+						}
+						select {
+						case errChan <- err:
+						default:
+						}
+						cancel()
+						return
+					}
 				}
 			}
 		})
 	}
 
+sendLoop:
 	for _, task := range tasks {
-		taskChan <- task
+		select {
+		case <-workerCtx.Done():
+			break sendLoop
+		case taskChan <- task:
+		}
 	}
 	close(taskChan)
 
@@ -91,6 +108,85 @@ func runWorkerPool[T any](tasks []T, maxWorkers int, worker func(T) error) error
 	case err := <-errChan:
 		return err
 	default:
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return nil
+	}
+}
+
+// runWorkerPoolStream executes streamed tasks with a worker pool to avoid building large task slices in memory.
+func runWorkerPoolStream[T any](ctx context.Context, maxWorkers int, worker func(context.Context, T) error, producer func(context.Context, chan<- T) error) error {
+	if maxWorkers < 1 {
+		return fmt.Errorf("max workers must be at least 1, got %d", maxWorkers)
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	bufferSize := maxWorkers * DefaultWorkerPoolBufferMultiplier
+	taskChan := make(chan T, bufferSize)
+	errChan := make(chan error, 2)
+	var wg sync.WaitGroup
+
+	for range maxWorkers {
+		wg.Go(func() {
+			for {
+				select {
+				case <-workerCtx.Done():
+					return
+				case task, ok := <-taskChan:
+					if !ok {
+						return
+					}
+					if err := worker(workerCtx, task); err != nil {
+						if errors.Is(err, context.Canceled) && workerCtx.Err() != nil {
+							return
+						}
+						select {
+						case errChan <- err:
+						default:
+						}
+						cancel()
+						return
+					}
+				}
+			}
+		})
+	}
+
+	producerDone := make(chan struct{})
+	go func() {
+		defer close(producerDone)
+		defer close(taskChan)
+		if err := producer(workerCtx, taskChan); err != nil && !errors.Is(err, context.Canceled) {
+			select {
+			case errChan <- err:
+			default:
+			}
+			cancel()
+		}
+	}()
+
+	wg.Wait()
+	<-producerDone
+	close(errChan)
+
+	select {
+	case err := <-errChan:
+		return err
+	default:
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		return nil
 	}
 }

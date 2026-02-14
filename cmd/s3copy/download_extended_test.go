@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	manager "github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -139,6 +139,23 @@ func TestDownloadFromS3WithEncryption(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, originalContent, content)
 	})
+
+	t.Run("failed decrypt preserves existing file", func(t *testing.T) {
+		destFile := filepath.Join(t.TempDir(), "existing.txt")
+		existingContent := []byte("keep-existing-content")
+		err := os.WriteFile(destFile, existingContent, 0644)
+		require.NoError(t, err)
+
+		password = "wrong-password"
+		setTestConfig(fmt.Sprintf("s3://%s/%s", bucketName, testKey), destFile, bucketName, true, false, true, false)
+
+		err = downloadFromS3(ctx)
+		require.Error(t, err)
+
+		content, readErr := os.ReadFile(destFile)
+		require.NoError(t, readErr)
+		assert.Equal(t, existingContent, content)
+	})
 }
 
 func TestDownloadFromS3Errors(t *testing.T) {
@@ -183,6 +200,12 @@ func TestDownloadFromS3Errors(t *testing.T) {
 }
 
 func TestDownloadFileWithParams(t *testing.T) {
+	restore := preserveGlobalVars()
+	defer restore()
+	encrypt = false
+	dryRun = false
+	forceOverwrite = false
+
 	ctx := context.Background()
 	bucketName := "test-download-params-bucket"
 
@@ -201,7 +224,7 @@ func TestDownloadFileWithParams(t *testing.T) {
 
 	t.Run("download with checkSkipExisting false", func(t *testing.T) {
 		destFile := filepath.Join(t.TempDir(), "output.txt")
-		downloader := manager.NewDownloader(s3Client)
+		downloader := manager.New(s3Client)
 
 		err := downloadFileWithParams(ctx, downloader, bucketName, testKey, destFile, false)
 		assert.NoError(t, err)
@@ -210,13 +233,28 @@ func TestDownloadFileWithParams(t *testing.T) {
 
 	t.Run("download with dry run", func(t *testing.T) {
 		destFile := filepath.Join(t.TempDir(), "output-dryrun.txt")
-		downloader := manager.NewDownloader(s3Client)
+		downloader := manager.New(s3Client)
 
 		dryRun = true
 		err := downloadFileWithParams(ctx, downloader, bucketName, testKey, destFile, true)
 		assert.NoError(t, err)
 		assert.NoFileExists(t, destFile)
 		dryRun = false
+	})
+
+	t.Run("failed download preserves existing local file", func(t *testing.T) {
+		destFile := filepath.Join(t.TempDir(), "existing.txt")
+		originalContent := []byte("keep-me")
+		err := os.WriteFile(destFile, originalContent, 0644)
+		require.NoError(t, err)
+
+		downloader := manager.New(s3Client)
+		err = downloadFileWithParams(ctx, downloader, bucketName, "does-not-exist.txt", destFile, false)
+		require.Error(t, err)
+
+		content, err := os.ReadFile(destFile)
+		require.NoError(t, err)
+		assert.Equal(t, originalContent, content)
 	})
 }
 
@@ -265,4 +303,36 @@ func TestDownloadDirectory(t *testing.T) {
 		unexpectedFile := filepath.Join(destDir, "other", "unrelated.txt")
 		assert.NoFileExists(t, unexpectedFile)
 	})
+}
+
+func TestDownloadDirectoryWithPagination(t *testing.T) {
+	ctx := context.Background()
+	bucketName := "test-download-pagination-bucket"
+
+	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
+	defer cleanup()
+
+	const fileCount = 1105
+	for i := range fileCount {
+		key := fmt.Sprintf("paged/file-%04d.txt", i)
+		_, err := s3Client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(key),
+			Body:   bytes.NewReader([]byte("content")),
+		})
+		require.NoError(t, err)
+	}
+
+	destDir := t.TempDir()
+	setTestConfig(fmt.Sprintf("s3://%s/paged/", bucketName), destDir, bucketName, false, false, true, false)
+
+	err := downloadFromS3(ctx)
+	require.NoError(t, err)
+
+	entries, err := os.ReadDir(destDir)
+	require.NoError(t, err)
+	assert.Len(t, entries, fileCount)
+
+	assert.FileExists(t, filepath.Join(destDir, "file-0000.txt"))
+	assert.FileExists(t, filepath.Join(destDir, "file-1104.txt"))
 }

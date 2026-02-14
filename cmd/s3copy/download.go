@@ -8,17 +8,17 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	manager "github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 func downloadFromS3(ctx context.Context) error {
 	s3Client, err := getS3Client(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get S3 client: %v", err)
+		return fmt.Errorf("failed to get S3 client: %w", err)
 	}
 
-	downloader := manager.NewDownloader(s3Client)
+	downloader := manager.New(s3Client)
 
 	s3Path := strings.TrimPrefix(source, "s3://")
 	var s3Key string
@@ -52,65 +52,76 @@ func downloadFromS3(ctx context.Context) error {
 			}
 		}
 
-		return downloadFile(downloader, s3Key, finalDestination)
+		return downloadFile(ctx, downloader, s3Key, finalDestination)
 	}
 
-	result, err := s3Client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+	paginator := s3.NewListObjectsV2Paginator(s3Client, &s3.ListObjectsV2Input{
 		Bucket: aws.String(bucket),
 		Prefix: aws.String(s3Key),
 	})
-
-	if err != nil {
-		return fmt.Errorf("failed to list objects: %v", err)
-	}
-
-	if len(result.Contents) == 0 {
-		return fmt.Errorf("no objects found with prefix: %s", s3Key)
-	}
-
-	if err := os.MkdirAll(destination, 0755); err != nil {
-		return fmt.Errorf("failed to create destination directory: %v", err)
-	}
 
 	type downloadTask struct {
 		s3Key     string
 		localPath string
 	}
-	var tasks []downloadTask
 
-	for _, obj := range result.Contents {
-		relPath := strings.TrimPrefix(*obj.Key, s3Key)
-		relPath = strings.TrimPrefix(relPath, "/")
-
-		if relPath == "" {
-			relPath = filepath.Base(*obj.Key)
-		}
-
-		localPath := filepath.Join(destination, relPath)
-
-		if err := os.MkdirAll(filepath.Dir(localPath), 0755); err != nil {
-			return fmt.Errorf("failed to create directory: %v", err)
-		}
-
-		tasks = append(tasks, downloadTask{
-			s3Key:     *obj.Key,
-			localPath: localPath,
-		})
+	if err := os.MkdirAll(destination, 0755); err != nil {
+		return fmt.Errorf("failed to create destination directory: %w", err)
 	}
 
-	return runWorkerPool(tasks, maxWorkers, func(task downloadTask) error {
-		if err := downloadFile(downloader, task.s3Key, task.localPath); err != nil {
-			return fmt.Errorf("failed to download %s: %v", task.s3Key, err)
+	return runWorkerPoolStream(ctx, maxWorkers, func(workerCtx context.Context, task downloadTask) error {
+		if err := os.MkdirAll(filepath.Dir(task.localPath), 0755); err != nil {
+			return fmt.Errorf("failed to create directory: %w", err)
 		}
+
+		if err := downloadFile(workerCtx, downloader, task.s3Key, task.localPath); err != nil {
+			return fmt.Errorf("failed to download %s: %w", task.s3Key, err)
+		}
+		return nil
+	}, func(producerCtx context.Context, taskChan chan<- downloadTask) error {
+		foundObjects := false
+
+		for paginator.HasMorePages() {
+			result, pageErr := paginator.NextPage(producerCtx)
+			if pageErr != nil {
+				return fmt.Errorf("failed to list objects: %w", pageErr)
+			}
+
+			for _, obj := range result.Contents {
+				foundObjects = true
+
+				relPath := strings.TrimPrefix(*obj.Key, s3Key)
+				relPath = strings.TrimPrefix(relPath, "/")
+				if relPath == "" {
+					relPath = filepath.Base(*obj.Key)
+				}
+
+				task := downloadTask{
+					s3Key:     *obj.Key,
+					localPath: filepath.Join(destination, relPath),
+				}
+
+				select {
+				case <-producerCtx.Done():
+					return producerCtx.Err()
+				case taskChan <- task:
+				}
+			}
+		}
+
+		if !foundObjects {
+			return fmt.Errorf("no objects found with prefix: %s", s3Key)
+		}
+
 		return nil
 	})
 }
 
-func downloadFile(downloader *manager.Downloader, s3Key, localPath string) error {
-	return downloadFileWithParams(context.Background(), downloader, bucket, s3Key, localPath, true)
+func downloadFile(ctx context.Context, downloader *manager.Client, s3Key, localPath string) error {
+	return downloadFileWithParams(ctx, downloader, bucket, s3Key, localPath, true)
 }
 
-func downloadFileWithParams(ctx context.Context, downloader *manager.Downloader, bucketName, s3Key, localPath string, checkSkipExisting bool) error {
+func downloadFileWithParams(ctx context.Context, downloader *manager.Client, bucketName, s3Key, localPath string, checkSkipExisting bool) error {
 	if checkSkipExisting {
 		logInfo("Downloading s3://%s/%s to %s\n", bucketName, s3Key, localPath)
 	}
@@ -144,7 +155,7 @@ func downloadFileWithParams(ctx context.Context, downloader *manager.Downloader,
 	if encrypt {
 		tempFile, err := os.CreateTemp(filepath.Dir(localPath), ".s3copy-tmp-*")
 		if err != nil {
-			return fmt.Errorf("failed to create temp file: %v", err)
+			return fmt.Errorf("failed to create temp file: %w", err)
 		}
 		tempPath := tempFile.Name()
 		defer func() {
@@ -153,13 +164,11 @@ func downloadFileWithParams(ctx context.Context, downloader *manager.Downloader,
 			}
 		}()
 
-		err = retryOperation(func() error {
-			_, err := downloader.Download(ctx, tempFile, &s3.GetObjectInput{
-				Bucket: aws.String(bucketName),
-				Key:    aws.String(s3Key),
-			})
-			return err
-		}, "Download", retries)
+		_, err = downloader.DownloadObject(ctx, &manager.DownloadObjectInput{
+			Bucket:   aws.String(bucketName),
+			Key:      aws.String(s3Key),
+			WriterAt: tempFile,
+		})
 
 		closeWithLog(tempFile, tempPath)
 
@@ -169,35 +178,65 @@ func downloadFileWithParams(ctx context.Context, downloader *manager.Downloader,
 
 		tempFileRead, err := os.Open(tempPath)
 		if err != nil {
-			return fmt.Errorf("failed to open temp file for decryption: %v", err)
+			return fmt.Errorf("failed to open temp file for decryption: %w", err)
 		}
 		defer closeWithLog(tempFileRead, tempPath)
 
-		outFile, err := os.Create(localPath)
+		decryptedTempFile, err := os.CreateTemp(filepath.Dir(localPath), ".s3copy-dec-*")
 		if err != nil {
-			return fmt.Errorf("failed to create file %s: %v", localPath, err)
+			return fmt.Errorf("failed to create temp decrypted file for %s: %w", localPath, err)
 		}
-		defer closeWithLog(outFile, localPath)
+		decryptedTempPath := decryptedTempFile.Name()
+		defer func() {
+			if err := os.Remove(decryptedTempPath); err != nil && !os.IsNotExist(err) {
+				fmt.Printf("Warning: failed to remove temp file %s: %v\n", decryptedTempPath, err)
+			}
+		}()
 
-		if err := decryptStreamFromReader(outFile, tempFileRead); err != nil {
-			return fmt.Errorf("decryption failed: %v", err)
+		if err := decryptStreamFromReader(decryptedTempFile, tempFileRead); err != nil {
+			closeWithLog(decryptedTempFile, decryptedTempPath)
+			return fmt.Errorf("decryption failed: %w", err)
+		}
+
+		closeWithLog(decryptedTempFile, decryptedTempPath)
+
+		if err := os.Rename(decryptedTempPath, localPath); err != nil {
+			if removeErr := os.Remove(localPath); removeErr != nil && !os.IsNotExist(removeErr) {
+				return fmt.Errorf("failed to replace existing file %s: %w", localPath, removeErr)
+			}
+			if renameErr := os.Rename(decryptedTempPath, localPath); renameErr != nil {
+				return fmt.Errorf("failed to move decrypted file into place: %w", renameErr)
+			}
 		}
 	} else {
-		file, err := os.Create(localPath)
+		tempFile, err := os.CreateTemp(filepath.Dir(localPath), ".s3copy-dl-*")
 		if err != nil {
-			return fmt.Errorf("failed to create file %s: %v", localPath, err)
+			return fmt.Errorf("failed to create temp file for %s: %w", localPath, err)
 		}
-		defer closeWithLog(file, localPath)
+		tempPath := tempFile.Name()
+		defer func() {
+			if err := os.Remove(tempPath); err != nil && !os.IsNotExist(err) {
+				fmt.Printf("Warning: failed to remove temp file %s: %v\n", tempPath, err)
+			}
+		}()
 
-		err = retryOperation(func() error {
-			_, err := downloader.Download(ctx, file, &s3.GetObjectInput{
-				Bucket: aws.String(bucketName),
-				Key:    aws.String(s3Key),
-			})
-			return err
-		}, "Download", retries)
+		_, err = downloader.DownloadObject(ctx, &manager.DownloadObjectInput{
+			Bucket:   aws.String(bucketName),
+			Key:      aws.String(s3Key),
+			WriterAt: tempFile,
+		})
+		closeWithLog(tempFile, tempPath)
 		if err != nil {
 			return err
+		}
+
+		if err := os.Rename(tempPath, localPath); err != nil {
+			if removeErr := os.Remove(localPath); removeErr != nil && !os.IsNotExist(removeErr) {
+				return fmt.Errorf("failed to replace existing file %s: %w", localPath, removeErr)
+			}
+			if renameErr := os.Rename(tempPath, localPath); renameErr != nil {
+				return fmt.Errorf("failed to move downloaded file into place: %w", renameErr)
+			}
 		}
 	}
 

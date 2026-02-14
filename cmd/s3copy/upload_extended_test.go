@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	manager "github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -221,7 +221,7 @@ func TestUploadFileWithParams(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("upload with checkSkipExisting false", func(t *testing.T) {
-		uploader := manager.NewUploader(s3Client)
+		uploader := manager.New(s3Client)
 		s3Key := "params-test-file.txt"
 
 		err := uploadFileWithParams(ctx, uploader, bucketName, s3Key, testFile, false)

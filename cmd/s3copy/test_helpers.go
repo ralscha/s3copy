@@ -100,6 +100,7 @@ func setTestConfig(src, dst, bkt string, enc, rec, qu, verb bool) {
 	verbose = verb
 	timeout = 0
 	retries = 3
+	syncCompare = "checksum"
 }
 
 func preserveGlobalVars() func() {
@@ -113,6 +114,7 @@ func preserveGlobalVars() func() {
 	originalIgnorePatterns := ignorePatterns
 	originalIgnoreFile := ignoreFile
 	originalIgnoreMatcher := ignoreMatcher
+	originalSyncCompare := syncCompare
 
 	return func() {
 		source = originalSource
@@ -125,5 +127,6 @@ func preserveGlobalVars() func() {
 		ignorePatterns = originalIgnorePatterns
 		ignoreFile = originalIgnoreFile
 		ignoreMatcher = originalIgnoreMatcher
+		syncCompare = originalSyncCompare
 	}
 }

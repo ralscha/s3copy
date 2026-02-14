@@ -74,7 +74,7 @@ func getS3Client(ctx context.Context) (*s3.Client, error) {
 
 	cfg, err := createS3Config(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create S3 config: %v", err)
+		return nil, fmt.Errorf("failed to create S3 config: %w", err)
 	}
 
 	clientOptions := []func(*s3.Options){}

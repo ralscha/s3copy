@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	manager "github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
@@ -17,6 +19,7 @@ type FileInfo struct {
 	Path    string
 	Size    int64
 	MD5Hash string
+	ModTime int64
 	IsDir   bool
 	RelPath string // Relative path from the base directory
 }
@@ -81,7 +84,7 @@ func syncS3ToLocal(ctx context.Context, s3Client *s3.Client) (SyncResult, error)
 		return result, fmt.Errorf("failed to list S3 files: %v", err)
 	}
 
-	localFiles, err := listLocalFiles(destination)
+	localFiles, err := listLocalFilesWithOptions(destination, shouldUseChecksumCompare())
 	if err != nil {
 		return result, fmt.Errorf("failed to list local files: %v", err)
 	}
@@ -102,7 +105,7 @@ func syncS3ToLocal(ctx context.Context, s3Client *s3.Client) (SyncResult, error)
 
 	for relPath, s3File := range s3FileMap {
 		if localFile, exists := localFileMap[relPath]; exists {
-			if !filesAreSameWithMetadataCheck(ctx, s3Client, localFile, s3File, s3Bucket) {
+			if !filesAreSameByMode(ctx, s3Client, localFile, s3File, s3Bucket) {
 				toDownload = append(toDownload, s3File)
 			}
 		} else {
@@ -155,7 +158,7 @@ func syncLocalToS3(ctx context.Context, s3Client *s3.Client) (SyncResult, error)
 		s3Prefix += "/"
 	}
 
-	localFiles, err := listLocalFiles(source)
+	localFiles, err := listLocalFilesWithOptions(source, shouldUseChecksumCompare())
 	if err != nil {
 		return result, fmt.Errorf("failed to list local files: %v", err)
 	}
@@ -181,7 +184,7 @@ func syncLocalToS3(ctx context.Context, s3Client *s3.Client) (SyncResult, error)
 
 	for relPath, localFile := range localFileMap {
 		if s3File, exists := s3FileMap[relPath]; exists {
-			if !filesAreSameWithMetadataCheck(ctx, s3Client, localFile, s3File, s3Bucket) {
+			if !filesAreSameByMode(ctx, s3Client, localFile, s3File, s3Bucket) {
 				toUpload = append(toUpload, localFile)
 			}
 		} else {
@@ -261,6 +264,10 @@ func listS3Files(ctx context.Context, s3Client *s3.Client, bucket, prefix string
 				IsDir:   false,
 			}
 
+			if obj.LastModified != nil {
+				file.ModTime = obj.LastModified.Unix()
+			}
+
 			if obj.ETag != nil {
 				file.MD5Hash = strings.Trim(*obj.ETag, "\"")
 			}
@@ -273,6 +280,10 @@ func listS3Files(ctx context.Context, s3Client *s3.Client, bucket, prefix string
 }
 
 func listLocalFiles(rootPath string) ([]FileInfo, error) {
+	return listLocalFilesWithOptions(rootPath, true)
+}
+
+func listLocalFilesWithOptions(rootPath string, calculateChecksums bool) ([]FileInfo, error) {
 	var files []FileInfo
 
 	err := filepath.Walk(rootPath, func(path string, info os.FileInfo, err error) error {
@@ -295,9 +306,12 @@ func listLocalFiles(rootPath string) ([]FileInfo, error) {
 			return nil
 		}
 
-		md5Hash, err := calculateFileMD5(path)
-		if err != nil {
-			return fmt.Errorf("failed to calculate MD5 for %s: %v", path, err)
+		md5Hash := ""
+		if calculateChecksums {
+			md5Hash, err = calculateFileMD5(path)
+			if err != nil {
+				return fmt.Errorf("failed to calculate MD5 for %s: %v", path, err)
+			}
 		}
 
 		file := FileInfo{
@@ -305,6 +319,7 @@ func listLocalFiles(rootPath string) ([]FileInfo, error) {
 			RelPath: relPath,
 			Size:    info.Size(),
 			MD5Hash: md5Hash,
+			ModTime: info.ModTime().Unix(),
 			IsDir:   false,
 		}
 
@@ -347,30 +362,66 @@ func filesAreSameWithMetadataCheck(ctx context.Context, s3Client *s3.Client, loc
 	return localFile.MD5Hash == s3File.MD5Hash
 }
 
+func shouldUseChecksumCompare() bool {
+	return syncCompare != "size-time"
+}
+
+func filesAreSameByMode(ctx context.Context, s3Client *s3.Client, localFile, s3File FileInfo, bucket string) bool {
+	if shouldUseChecksumCompare() {
+		return filesAreSameWithMetadataCheck(ctx, s3Client, localFile, s3File, bucket)
+	}
+	return filesAreSameWithMtimeCheck(ctx, s3Client, localFile, s3File, bucket)
+}
+
+func filesAreSameWithMtimeCheck(ctx context.Context, s3Client *s3.Client, localFile, s3File FileInfo, bucket string) bool {
+	if localFile.Size != s3File.Size {
+		return false
+	}
+
+	if localFile.ModTime > 0 && s3File.ModTime > 0 {
+		diff := localFile.ModTime - s3File.ModTime
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff <= 1 {
+			return true
+		}
+	}
+
+	headResult, headErr := s3Client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(s3File.Path),
+	})
+	if headErr != nil || headResult.Metadata == nil {
+		return false
+	}
+
+	storedMTime, exists := headResult.Metadata["local-mtime"]
+	if !exists {
+		return false
+	}
+
+	mtimeUnix, parseErr := strconv.ParseInt(storedMTime, 10, 64)
+	if parseErr != nil {
+		return false
+	}
+
+	return mtimeUnix == localFile.ModTime
+}
+
 type downloadSyncTask struct {
 	file       FileInfo
 	bucket     string
 	destPath   string
-	downloader *manager.Downloader
+	downloader *manager.Client
 }
 
 func downloadFiles(ctx context.Context, s3Client *s3.Client, bucket string, files []FileInfo, result *SyncResult) error {
-	downloader := manager.NewDownloader(s3Client)
-
-	var tasks []downloadSyncTask
-	for _, file := range files {
-		destPath := filepath.Join(destination, filepath.FromSlash(file.RelPath))
-		tasks = append(tasks, downloadSyncTask{
-			file:       file,
-			bucket:     bucket,
-			destPath:   destPath,
-			downloader: downloader,
-		})
-	}
+	downloader := manager.New(s3Client)
 
 	var mutex sync.Mutex
 
-	return runWorkerPool(tasks, maxWorkers, func(task downloadSyncTask) error {
+	return runWorkerPoolStream(ctx, maxWorkers, func(workerCtx context.Context, task downloadSyncTask) error {
 		if dryRun {
 			logInfo("Would download: %s\n", task.file.RelPath)
 			mutex.Lock()
@@ -387,17 +438,40 @@ func downloadFiles(ctx context.Context, s3Client *s3.Client, bucket string, file
 			return nil // Continue processing other files instead of stopping
 		}
 
-		if err := downloadSingleFile(ctx, task.downloader, task.bucket, task.file.Path, task.destPath); err != nil {
+		if err := downloadSingleFile(workerCtx, task.downloader, task.bucket, task.file.Path, task.destPath); err != nil {
 			mutex.Lock()
 			result.Errors = append(result.Errors, fmt.Sprintf("Failed to download %s: %v", task.file.RelPath, err))
 			mutex.Unlock()
 			return nil // Continue processing other files instead of stopping
 		}
 
+		if !shouldUseChecksumCompare() && task.file.ModTime > 0 {
+			modTime := time.Unix(task.file.ModTime, 0)
+			if err := os.Chtimes(task.destPath, modTime, modTime); err != nil {
+				logVerbose("Warning: failed to set file mtime for %s: %v\n", task.destPath, err)
+			}
+		}
+
 		logInfo("Downloaded: %s\n", task.file.RelPath)
 		mutex.Lock()
 		result.Downloaded = append(result.Downloaded, task.file.RelPath)
 		mutex.Unlock()
+		return nil
+	}, func(producerCtx context.Context, taskChan chan<- downloadSyncTask) error {
+		for _, file := range files {
+			task := downloadSyncTask{
+				file:       file,
+				bucket:     bucket,
+				destPath:   filepath.Join(destination, filepath.FromSlash(file.RelPath)),
+				downloader: downloader,
+			}
+
+			select {
+			case <-producerCtx.Done():
+				return producerCtx.Err()
+			case taskChan <- task:
+			}
+		}
 		return nil
 	})
 }
@@ -406,26 +480,15 @@ type uploadSyncTask struct {
 	file     FileInfo
 	bucket   string
 	s3Key    string
-	uploader *manager.Uploader
+	uploader *manager.Client
 }
 
 func uploadFiles(ctx context.Context, s3Client *s3.Client, bucket, prefix string, files []FileInfo, result *SyncResult) error {
-	uploader := manager.NewUploader(s3Client)
-
-	var tasks []uploadSyncTask
-	for _, file := range files {
-		s3Key := prefix + file.RelPath
-		tasks = append(tasks, uploadSyncTask{
-			file:     file,
-			bucket:   bucket,
-			s3Key:    s3Key,
-			uploader: uploader,
-		})
-	}
+	uploader := manager.New(s3Client)
 
 	var mutex sync.Mutex
 
-	return runWorkerPool(tasks, maxWorkers, func(task uploadSyncTask) error {
+	return runWorkerPoolStream(ctx, maxWorkers, func(workerCtx context.Context, task uploadSyncTask) error {
 		if dryRun {
 			logInfo("Would upload: %s\n", task.file.RelPath)
 			mutex.Lock()
@@ -434,7 +497,7 @@ func uploadFiles(ctx context.Context, s3Client *s3.Client, bucket, prefix string
 			return nil
 		}
 
-		if err := uploadSingleFile(ctx, task.uploader, task.bucket, task.s3Key, task.file.Path); err != nil {
+		if err := uploadSingleFile(workerCtx, task.uploader, task.bucket, task.s3Key, task.file.Path); err != nil {
 			mutex.Lock()
 			result.Errors = append(result.Errors, fmt.Sprintf("Failed to upload %s: %v", task.file.RelPath, err))
 			mutex.Unlock()
@@ -445,6 +508,22 @@ func uploadFiles(ctx context.Context, s3Client *s3.Client, bucket, prefix string
 		mutex.Lock()
 		result.Uploaded = append(result.Uploaded, task.file.RelPath)
 		mutex.Unlock()
+		return nil
+	}, func(producerCtx context.Context, taskChan chan<- uploadSyncTask) error {
+		for _, file := range files {
+			task := uploadSyncTask{
+				file:     file,
+				bucket:   bucket,
+				s3Key:    prefix + file.RelPath,
+				uploader: uploader,
+			}
+
+			select {
+			case <-producerCtx.Done():
+				return producerCtx.Err()
+			case taskChan <- task:
+			}
+		}
 		return nil
 	})
 }
@@ -492,11 +571,11 @@ func deleteS3Files(ctx context.Context, s3Client *s3.Client, bucket string, file
 	return nil
 }
 
-func downloadSingleFile(ctx context.Context, downloader *manager.Downloader, bucket, key, destPath string) error {
+func downloadSingleFile(ctx context.Context, downloader *manager.Client, bucket, key, destPath string) error {
 	return downloadFileWithParams(ctx, downloader, bucket, key, destPath, false)
 }
 
-func uploadSingleFile(ctx context.Context, uploader *manager.Uploader, bucket, key, filePath string) error {
+func uploadSingleFile(ctx context.Context, uploader *manager.Client, bucket, key, filePath string) error {
 	return uploadFileWithParams(ctx, uploader, bucket, key, filePath, false)
 }
 

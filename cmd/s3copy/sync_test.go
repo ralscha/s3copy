@@ -52,6 +52,38 @@ func TestSyncMode(t *testing.T) {
 	}
 }
 
+func TestSyncCompareModeSelection(t *testing.T) {
+	restore := preserveGlobalVars()
+	defer restore()
+
+	syncCompare = "checksum"
+	assert.True(t, shouldUseChecksumCompare())
+
+	syncCompare = "size-time"
+	assert.False(t, shouldUseChecksumCompare())
+}
+
+func TestListLocalFilesWithOptions(t *testing.T) {
+	restore := preserveGlobalVars()
+	defer restore()
+
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "file.txt")
+	err := os.WriteFile(filePath, []byte("hello"), 0644)
+	require.NoError(t, err)
+
+	withChecksums, err := listLocalFilesWithOptions(tempDir, true)
+	require.NoError(t, err)
+	require.Len(t, withChecksums, 1)
+	assert.NotEmpty(t, withChecksums[0].MD5Hash)
+
+	withoutChecksums, err := listLocalFilesWithOptions(tempDir, false)
+	require.NoError(t, err)
+	require.Len(t, withoutChecksums, 1)
+	assert.Empty(t, withoutChecksums[0].MD5Hash)
+	assert.Greater(t, withoutChecksums[0].ModTime, int64(0))
+}
+
 func TestFilesAreSame(t *testing.T) {
 	file1 := FileInfo{
 		Size:    100,
@@ -143,6 +175,18 @@ func TestSyncLocalToS3(t *testing.T) {
 	})
 
 	t.Run("No changes sync - all files already in sync", func(t *testing.T) {
+		result, err := syncLocalToS3(ctx, s3Client)
+		require.NoError(t, err)
+
+		assert.Empty(t, result.Uploaded)
+		assert.Empty(t, result.Downloaded)
+		assert.Empty(t, result.Deleted)
+		assert.Empty(t, result.Errors)
+	})
+
+	t.Run("No changes sync with size-time compare", func(t *testing.T) {
+		syncCompare = "size-time"
+
 		result, err := syncLocalToS3(ctx, s3Client)
 		require.NoError(t, err)
 
@@ -287,6 +331,18 @@ func TestSyncS3ToLocal(t *testing.T) {
 		assert.Empty(t, result.Errors)
 	})
 
+	t.Run("No changes sync with size-time compare", func(t *testing.T) {
+		syncCompare = "size-time"
+
+		result, err := syncS3ToLocal(ctx, s3Client)
+		require.NoError(t, err)
+
+		assert.Empty(t, result.Uploaded)
+		assert.Empty(t, result.Downloaded)
+		assert.Empty(t, result.Deleted)
+		assert.Empty(t, result.Errors)
+	})
+
 	t.Run("Modified S3 file sync", func(t *testing.T) {
 		modifiedContent := "Updated document content from S3"
 		_, err := s3Client.PutObject(ctx, &s3.PutObjectInput{
@@ -360,7 +416,7 @@ func TestSyncS3ToLocal(t *testing.T) {
 	})
 }
 
-func TestSyncWithIgnorePatternsMinIO(t *testing.T) {
+func TestSyncWithIgnorePatterns(t *testing.T) {
 	ctx := context.Background()
 	bucketName := "sync-ignore-test-bucket"
 

@@ -32,6 +32,7 @@ var (
 	retries        int
 	forceOverwrite bool
 	syncMode       bool
+	syncCompare    = "checksum"
 )
 
 func main() {
@@ -156,8 +157,22 @@ Supports gitignore-style file filtering for selective copying.`,
 				Usage:       "Sync mode: makes destination directory exactly match source directory (one-way sync)",
 				Destination: &syncMode,
 			},
+			&cli.StringFlag{
+				Name:        "sync-compare",
+				Usage:       "Sync compare strategy: checksum (default) or size-time",
+				Value:       "checksum",
+				Destination: &syncCompare,
+			},
 		},
 		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
+			if maxWorkers < 1 {
+				return ctx, fmt.Errorf("max-workers must be at least 1")
+			}
+
+			if syncCompare != "checksum" && syncCompare != "size-time" {
+				return ctx, fmt.Errorf("sync-compare must be one of: checksum, size-time")
+			}
+
 			if password == "" && cmd.IsSet("password") {
 				password = "PROMPT"
 			}
@@ -184,7 +199,7 @@ Supports gitignore-style file filtering for selective copying.`,
 
 					if !sourceIsS3 {
 						if info, err := os.Stat(source); err != nil {
-							return ctx, fmt.Errorf("source directory does not exist: %v", err)
+							return ctx, fmt.Errorf("source directory does not exist: %w", err)
 						} else if !info.IsDir() {
 							return ctx, fmt.Errorf("source must be a directory in sync mode")
 						}
@@ -193,7 +208,7 @@ Supports gitignore-style file filtering for selective copying.`,
 					if !destIsS3 {
 						if info, err := os.Stat(destination); err != nil {
 							if !os.IsNotExist(err) {
-								return ctx, fmt.Errorf("error checking destination: %v", err)
+								return ctx, fmt.Errorf("error checking destination: %w", err)
 							}
 						} else if !info.IsDir() {
 							return ctx, fmt.Errorf("destination must be a directory in sync mode")
@@ -238,12 +253,12 @@ func runCopy() error {
 	}
 
 	if err := initializeIgnoreMatcher(); err != nil {
-		return fmt.Errorf("error initializing ignore patterns: %v", err)
+		return fmt.Errorf("error initializing ignore patterns: %w", err)
 	}
 
 	if listObjects {
 		if err := listS3Objects(); err != nil {
-			return fmt.Errorf("error listing objects: %v", err)
+			return fmt.Errorf("error listing objects: %w", err)
 		}
 		return nil
 	}
@@ -253,7 +268,7 @@ func runCopy() error {
 			var err error
 			password, err = getPasswordFromUser()
 			if err != nil {
-				return fmt.Errorf("error getting password: %v", err)
+				return fmt.Errorf("error getting password: %w", err)
 			}
 			if password == "" {
 				return fmt.Errorf("empty password provided for encryption")
@@ -270,7 +285,7 @@ func runCopy() error {
 
 	if syncMode {
 		if err := syncDirectories(ctx); err != nil {
-			return fmt.Errorf("error syncing directories: %v", err)
+			return fmt.Errorf("error syncing directories: %w", err)
 		}
 		logInfo("Sync operation completed successfully!\n")
 		return nil
@@ -289,11 +304,11 @@ func runCopy() error {
 
 	if sourceIsS3 {
 		if err := downloadFromS3(ctx); err != nil {
-			return fmt.Errorf("error downloading from S3: %v", err)
+			return fmt.Errorf("error downloading from S3: %w", err)
 		}
 	} else {
 		if err := uploadToS3(ctx); err != nil {
-			return fmt.Errorf("error uploading to S3: %v", err)
+			return fmt.Errorf("error uploading to S3: %w", err)
 		}
 	}
 

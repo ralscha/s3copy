@@ -2,34 +2,35 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
+	manager "github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 )
 
 func uploadToS3(ctx context.Context) error {
 	s3Client, err := getS3Client(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get S3 client: %v", err)
+		return fmt.Errorf("failed to get S3 client: %w", err)
 	}
 
-	uploader := manager.NewUploader(s3Client)
+	uploader := manager.New(s3Client)
 
 	matches, err := filepath.Glob(source)
 	if err != nil {
-		return fmt.Errorf("invalid glob pattern: %v", err)
+		return fmt.Errorf("invalid glob pattern: %w", err)
 	}
 
 	if len(matches) == 0 {
 		info, err := os.Stat(source)
 		if err != nil {
-			return fmt.Errorf("failed to stat source: %v", err)
+			return fmt.Errorf("failed to stat source: %w", err)
 		}
 
 		parsedBucket, s3Key, err := parseS3Path(destination, bucket, info.IsDir(), source)
@@ -45,10 +46,10 @@ func uploadToS3(ctx context.Context) error {
 			if !recursive {
 				return fmt.Errorf("source is a directory, use -r flag for recursive copy")
 			}
-			return uploadDirectory(uploader, source, s3Key)
+			return uploadDirectory(ctx, uploader, source, s3Key)
 		}
 
-		return uploadFile(uploader, source, s3Key)
+		return uploadFile(ctx, uploader, source, s3Key)
 	}
 
 	var parsedBucket, s3Key string
@@ -97,7 +98,7 @@ func uploadToS3(ctx context.Context) error {
 					dirS3Key = filepath.Join(s3Key, filepath.Base(match))
 					dirS3Key = strings.ReplaceAll(dirS3Key, "\\", "/")
 				}
-				if err := uploadDirectory(uploader, match, dirS3Key); err != nil {
+				if err := uploadDirectory(ctx, uploader, match, dirS3Key); err != nil {
 					return err
 				}
 			} else {
@@ -109,7 +110,7 @@ func uploadToS3(ctx context.Context) error {
 				key = filepath.Join(s3Key, filepath.Base(match))
 				key = strings.ReplaceAll(key, "\\", "/")
 			}
-			if err := uploadFile(uploader, match, key); err != nil {
+			if err := uploadFile(ctx, uploader, match, key); err != nil {
 				return err
 			}
 		}
@@ -118,63 +119,70 @@ func uploadToS3(ctx context.Context) error {
 	return nil
 }
 
-func uploadDirectory(uploader *manager.Uploader, localDir, s3Prefix string) error {
+func uploadDirectory(ctx context.Context, uploader *manager.Client, localDir, s3Prefix string) error {
 	type uploadTask struct {
 		localPath string
 		s3Key     string
 	}
-	var tasks []uploadTask
 
-	err := filepath.Walk(localDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
+	return runWorkerPoolStream(ctx, maxWorkers, func(workerCtx context.Context, task uploadTask) error {
+		if err := uploadFile(workerCtx, uploader, task.localPath, task.s3Key); err != nil {
+			return fmt.Errorf("failed to upload %s: %w", task.localPath, err)
 		}
-
-		if info.IsDir() {
-			if shouldIgnoreFile(path) {
-				logInfo("Ignoring directory: %s\n", path)
-				return filepath.SkipDir
+		return nil
+	}, func(producerCtx context.Context, taskChan chan<- uploadTask) error {
+		walkErr := filepath.Walk(localDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
 			}
-			return nil
-		}
 
-		if shouldIgnoreFile(path) {
-			logInfo("Ignoring file: %s\n", path)
-			return nil
-		}
+			if producerCtx.Err() != nil {
+				return producerCtx.Err()
+			}
 
-		relPath, err := filepath.Rel(localDir, path)
-		if err != nil {
-			return err
-		}
+			if info.IsDir() {
+				if shouldIgnoreFile(path) {
+					logInfo("Ignoring directory: %s\n", path)
+					return filepath.SkipDir
+				}
+				return nil
+			}
 
-		s3Key := filepath.Join(s3Prefix, relPath)
-		s3Key = strings.ReplaceAll(s3Key, "\\", "/")
+			if shouldIgnoreFile(path) {
+				logInfo("Ignoring file: %s\n", path)
+				return nil
+			}
 
-		tasks = append(tasks, uploadTask{
-			localPath: path,
-			s3Key:     s3Key,
+			relPath, relErr := filepath.Rel(localDir, path)
+			if relErr != nil {
+				return relErr
+			}
+
+			task := uploadTask{
+				localPath: path,
+				s3Key:     strings.ReplaceAll(filepath.Join(s3Prefix, relPath), "\\", "/"),
+			}
+
+			select {
+			case <-producerCtx.Done():
+				return producerCtx.Err()
+			case taskChan <- task:
+				return nil
+			}
 		})
-		return nil
-	})
 
-	if err != nil {
-		return err
-	}
-
-	return runWorkerPool(tasks, maxWorkers, func(task uploadTask) error {
-		if err := uploadFile(uploader, task.localPath, task.s3Key); err != nil {
-			return fmt.Errorf("failed to upload %s: %v", task.localPath, err)
+		if errors.Is(walkErr, context.Canceled) {
+			return producerCtx.Err()
 		}
-		return nil
+		return walkErr
 	})
 }
 
-func uploadFile(uploader *manager.Uploader, filePath, s3Key string) error {
-	return uploadFileWithParams(context.Background(), uploader, bucket, s3Key, filePath, true)
+func uploadFile(ctx context.Context, uploader *manager.Client, filePath, s3Key string) error {
+	return uploadFileWithParams(ctx, uploader, bucket, s3Key, filePath, true)
 }
 
-func uploadFileWithParams(ctx context.Context, uploader *manager.Uploader, bucketName, s3Key, filePath string, checkSkipExisting bool) error {
+func uploadFileWithParams(ctx context.Context, uploader *manager.Client, bucketName, s3Key, filePath string, checkSkipExisting bool) error {
 	if checkSkipExisting {
 		logInfo("Uploading %s to s3://%s/%s\n", filePath, bucketName, s3Key)
 	}
@@ -184,12 +192,19 @@ func uploadFileWithParams(ctx context.Context, uploader *manager.Uploader, bucke
 	}
 
 	var localMD5 string
+	localMTime := ""
 	if !encrypt {
 		if md5Hash, err := calculateFileMD5(filePath); err == nil {
 			localMD5 = md5Hash
 		} else {
 			logVerbose("Warning: Could not calculate MD5 for %s: %v\n", filePath, err)
 		}
+	}
+
+	if fileInfo, statErr := os.Stat(filePath); statErr == nil {
+		localMTime = strconv.FormatInt(fileInfo.ModTime().Unix(), 10)
+	} else {
+		logVerbose("Warning: Could not stat %s for mtime metadata: %v\n", filePath, statErr)
 	}
 
 	if checkSkipExisting && !forceOverwrite && !encrypt && localMD5 != "" {
@@ -209,7 +224,7 @@ func uploadFileWithParams(ctx context.Context, uploader *manager.Uploader, bucke
 
 	file, err := os.Open(filePath)
 	if err != nil {
-		return fmt.Errorf("failed to open file %s: %v", filePath, err)
+		return fmt.Errorf("failed to open file %s: %w", filePath, err)
 	}
 	defer closeWithLog(file, filePath)
 
@@ -225,38 +240,46 @@ func uploadFileWithParams(ctx context.Context, uploader *manager.Uploader, bucke
 			errChan <- encryptStream(pipeWriter, file)
 		}()
 
-		uploadErr := retryOperation(func() error {
-			_, err := uploader.Upload(ctx, &s3.PutObjectInput{
-				Bucket: aws.String(bucketName),
-				Key:    aws.String(s3Key),
-				Body:   reader,
-			})
-			return err
-		}, "Upload", retries)
-
-		if uploadErr != nil {
-			return uploadErr
-		}
-
-		if encErr := <-errChan; encErr != nil {
-			return fmt.Errorf("encryption failed: %v", encErr)
-		}
-	} else {
-		uploadInput := &s3.PutObjectInput{
+		putInput := &manager.UploadObjectInput{
 			Bucket: aws.String(bucketName),
 			Key:    aws.String(s3Key),
 			Body:   reader,
 		}
-		if localMD5 != "" {
-			uploadInput.Metadata = map[string]string{
-				"local-md5": localMD5,
+		if localMTime != "" {
+			putInput.Metadata = map[string]string{
+				"local-mtime": localMTime,
 			}
 		}
 
-		err = retryOperation(func() error {
-			_, err := uploader.Upload(ctx, uploadInput)
-			return err
-		}, "Upload", retries)
+		_, uploadErr := uploader.UploadObject(ctx, putInput)
+
+		if uploadErr != nil {
+			_ = pipeReader.CloseWithError(uploadErr)
+			<-errChan
+			return uploadErr
+		}
+
+		closeWithLog(pipeReader, "pipe reader")
+		if encErr := <-errChan; encErr != nil {
+			return fmt.Errorf("encryption failed: %w", encErr)
+		}
+	} else {
+		uploadInput := &manager.UploadObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(s3Key),
+			Body:   reader,
+		}
+		if localMD5 != "" || localMTime != "" {
+			uploadInput.Metadata = map[string]string{}
+			if localMD5 != "" {
+				uploadInput.Metadata["local-md5"] = localMD5
+			}
+			if localMTime != "" {
+				uploadInput.Metadata["local-mtime"] = localMTime
+			}
+		}
+
+		_, err = uploader.UploadObject(ctx, uploadInput)
 		if err != nil {
 			return err
 		}

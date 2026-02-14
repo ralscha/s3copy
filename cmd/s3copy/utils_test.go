@@ -1,8 +1,12 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -115,5 +119,94 @@ func TestLogFunctions(t *testing.T) {
 			logVerbose("should not print")
 		})
 		assert.Empty(t, output)
+	})
+}
+
+func TestRunWorkerPool(t *testing.T) {
+	t.Run("invalid worker count", func(t *testing.T) {
+		err := runWorkerPool(context.Background(), []int{1}, 0, func(ctx context.Context, task int) error {
+			return nil
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "max workers must be at least 1")
+	})
+
+	t.Run("respects canceled context", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		err := runWorkerPool(ctx, []int{1, 2, 3}, 2, func(ctx context.Context, task int) error {
+			return nil
+		})
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, context.Canceled))
+	})
+
+	t.Run("returns first worker error", func(t *testing.T) {
+		expectedErr := errors.New("boom")
+
+		err := runWorkerPool(context.Background(), []int{1, 2, 3}, 2, func(ctx context.Context, task int) error {
+			if task == 2 {
+				return expectedErr
+			}
+			return nil
+		})
+
+		require.Error(t, err)
+		assert.Equal(t, expectedErr, err)
+	})
+
+	t.Run("returns canceled when context canceled mid-flight", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+
+		err := runWorkerPool(ctx, []int{1}, 1, func(ctx context.Context, task int) error {
+			<-ctx.Done()
+			return ctx.Err()
+		})
+
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, context.DeadlineExceeded))
+	})
+}
+
+func TestRunWorkerPoolStream(t *testing.T) {
+	t.Run("returns producer error", func(t *testing.T) {
+		expectedErr := errors.New("producer failed")
+
+		err := runWorkerPoolStream(context.Background(), 2, func(ctx context.Context, task int) error {
+			return nil
+		}, func(ctx context.Context, taskChan chan<- int) error {
+			return expectedErr
+		})
+
+		require.Error(t, err)
+		assert.Equal(t, expectedErr, err)
+	})
+
+	t.Run("processes streamed tasks", func(t *testing.T) {
+		var (
+			mu        sync.Mutex
+			processed []int
+		)
+
+		err := runWorkerPoolStream(context.Background(), 2, func(ctx context.Context, task int) error {
+			mu.Lock()
+			processed = append(processed, task)
+			mu.Unlock()
+			return nil
+		}, func(ctx context.Context, taskChan chan<- int) error {
+			for i := 1; i <= 5; i++ {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case taskChan <- i:
+				}
+			}
+			return nil
+		})
+
+		require.NoError(t, err)
+		assert.Len(t, processed, 5)
 	})
 }
