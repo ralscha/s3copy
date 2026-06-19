@@ -191,11 +191,13 @@ func TestDownloadFromS3Errors(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		if os.Getenv("CI") == "" {
-			setTestConfig(fmt.Sprintf("s3://%s/%s", bucketName, testKey), "/invalid/path/file.txt", bucketName, false, false, true, false)
-			err = downloadFromS3(ctx)
-			assert.Error(t, err)
-		}
+		invalidParent := filepath.Join(t.TempDir(), "not-a-directory")
+		err = os.WriteFile(invalidParent, []byte("blocking file"), 0644)
+		require.NoError(t, err)
+
+		setTestConfig(fmt.Sprintf("s3://%s/%s", bucketName, testKey), filepath.Join(invalidParent, "file.txt"), bucketName, false, false, true, false)
+		err = downloadFromS3(ctx)
+		assert.Error(t, err)
 	})
 }
 

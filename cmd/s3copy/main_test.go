@@ -125,14 +125,13 @@ S3COPY_USE_PATH_STYLE=true
 
 	t.Run("load valid env file", func(t *testing.T) {
 		envFile = envFilePath
-		source = "s3://bucket/key"
-		destination = "/tmp/dest"
+		source = filepath.Join(tempDir, "source")
+		destination = filepath.Join(tempDir, "dest")
 		bucket = "bucket"
 		listObjects = false
 
-		// This will fail at downloading, but we're testing env loading
+		// This will fail validation because both paths are local, but config should be loaded first.
 		err := runCopy()
-		// Error is expected (can't connect to S3), but config should be loaded
 		assert.Error(t, err)
 		assert.Equal(t, "test-access-key", config.AccessKey)
 		assert.Equal(t, "test-secret-key", config.SecretKey)

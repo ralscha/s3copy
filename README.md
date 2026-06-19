@@ -14,8 +14,13 @@ A CLI tool to copy files between local storage and S3-compatible storage with op
 ## Installation
 
 ```bash
-go mod tidy
-go build -o s3copy
+go build -o s3copy ./cmd/s3copy
+```
+
+On Windows, build with:
+
+```powershell
+go build -o s3copy.exe ./cmd/s3copy
 ```
 
 ## Configuration
@@ -35,6 +40,8 @@ S3COPY_USE_PATH_STYLE=false
 ```
 
 You can also specify a custom `.env` file path using the `--env` flag.
+
+Credentials are currently required for all commands, including `--list`.
 
 ## Usage
 
@@ -208,6 +215,16 @@ Use it:
 ## Encryption
 
 Encryption uses ChaCha20-Poly1305 (authenticated encryption) with Argon2id key derivation (3 iterations, 64 MB memory, 4 threads). Each encrypted file contains: `[32-byte salt][12-byte nonce][encrypted data]`
+
+## Development
+
+```bash
+go test ./cmd/s3copy
+go test -race ./cmd/s3copy
+go vet ./cmd/s3copy
+```
+
+The S3 transfer tests use Testcontainers with MinIO and require a working Docker daemon. When Docker is unavailable, those integration tests are skipped; pure unit tests still run.
 
 ## License
 

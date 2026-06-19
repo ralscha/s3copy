@@ -52,6 +52,10 @@ func syncDirectories(ctx context.Context) error {
 	}
 
 	printSyncSummary(result)
+	if len(result.Errors) > 0 {
+		return fmt.Errorf("sync completed with %d error(s)", len(result.Errors))
+	}
+
 	return nil
 }
 
@@ -239,16 +243,16 @@ func listS3Files(ctx context.Context, s3Client *s3.Client, bucket, prefix string
 
 			key := *obj.Key
 
-			if shouldIgnoreFile(key) {
-				continue
-			}
-
 			relPath := key
 			if prefix != "" {
 				relPath = strings.TrimPrefix(key, prefix)
 			}
 
 			if relPath == "" {
+				continue
+			}
+
+			if shouldIgnoreFile(relPath) {
 				continue
 			}
 
@@ -590,7 +594,7 @@ func printSyncSummary(result SyncResult) {
 		fmt.Printf("Uploaded: %d files\n", len(result.Uploaded))
 		if verbose {
 			for _, file := range result.Uploaded {
-				fmt.Printf("  ↑ %s\n", file)
+				fmt.Printf("  up %s\n", file)
 			}
 		}
 	}
@@ -599,7 +603,7 @@ func printSyncSummary(result SyncResult) {
 		fmt.Printf("Downloaded: %d files\n", len(result.Downloaded))
 		if verbose {
 			for _, file := range result.Downloaded {
-				fmt.Printf("  ↓ %s\n", file)
+				fmt.Printf("  down %s\n", file)
 			}
 		}
 	}
@@ -608,7 +612,7 @@ func printSyncSummary(result SyncResult) {
 		fmt.Printf("Deleted: %d files\n", len(result.Deleted))
 		if verbose {
 			for _, file := range result.Deleted {
-				fmt.Printf("  ✗ %s\n", file)
+				fmt.Printf("  delete %s\n", file)
 			}
 		}
 	}
@@ -616,7 +620,7 @@ func printSyncSummary(result SyncResult) {
 	if len(result.Errors) > 0 {
 		fmt.Printf("Errors: %d\n", len(result.Errors))
 		for _, err := range result.Errors {
-			fmt.Printf("  ⚠ %s\n", err)
+			fmt.Printf("  error %s\n", err)
 		}
 	}
 

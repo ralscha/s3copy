@@ -22,8 +22,15 @@ func TestMain(m *testing.M) {
 }
 
 func setupMinIOTest(t *testing.T, ctx context.Context, bucketName string) (*s3.Client, func()) {
+	t.Helper()
+
 	minioContainer, err := minio.Run(ctx, "minio/minio:RELEASE.2025-09-07T16-13-09Z")
-	require.NoError(t, err)
+	if err != nil {
+		if isDockerUnavailable(err) {
+			t.Skipf("skipping MinIO integration test: Docker/Testcontainers unavailable: %v", err)
+		}
+		require.NoError(t, err)
+	}
 
 	cleanup := func() {
 		testcontainers.CleanupContainer(t, minioContainer)
@@ -67,6 +74,25 @@ func setupMinIOTest(t *testing.T, ctx context.Context, bucketName string) (*s3.C
 	return s3Client, cleanup
 }
 
+func isDockerUnavailable(err error) bool {
+	msg := strings.ToLower(err.Error())
+	unavailableMessages := []string{
+		"cannot connect to the docker daemon",
+		"docker is not available",
+		"docker daemon",
+		"failed to create docker provider",
+		"rootless docker is not supported",
+	}
+
+	for _, unavailableMessage := range unavailableMessages {
+		if strings.Contains(msg, unavailableMessage) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func captureStdout(fn func()) string {
 	oldStdout := os.Stdout
 	r, w, _ := os.Pipe()
@@ -100,6 +126,8 @@ func setTestConfig(src, dst, bkt string, enc, rec, qu, verb bool) {
 	verbose = verb
 	timeout = 0
 	retries = 3
+	forceOverwrite = false
+	syncMode = false
 	syncCompare = "checksum"
 }
 
@@ -109,12 +137,23 @@ func preserveGlobalVars() func() {
 	originalBucket := bucket
 	originalEncrypt := encrypt
 	originalRecursive := recursive
+	originalEnvFile := envFile
+	originalListObjects := listObjects
+	originalFilter := filter
+	originalListDetailed := listDetailed
 	originalQuiet := quiet
 	originalVerbose := verbose
+	originalMaxWorkers := maxWorkers
+	originalDryRun := dryRun
+	originalTimeout := timeout
+	originalRetries := retries
+	originalForceOverwrite := forceOverwrite
+	originalSyncMode := syncMode
 	originalIgnorePatterns := ignorePatterns
 	originalIgnoreFile := ignoreFile
 	originalIgnoreMatcher := ignoreMatcher
 	originalSyncCompare := syncCompare
+	originalPassword := password
 
 	return func() {
 		source = originalSource
@@ -122,11 +161,22 @@ func preserveGlobalVars() func() {
 		bucket = originalBucket
 		encrypt = originalEncrypt
 		recursive = originalRecursive
+		envFile = originalEnvFile
+		listObjects = originalListObjects
+		filter = originalFilter
+		listDetailed = originalListDetailed
 		quiet = originalQuiet
 		verbose = originalVerbose
+		maxWorkers = originalMaxWorkers
+		dryRun = originalDryRun
+		timeout = originalTimeout
+		retries = originalRetries
+		forceOverwrite = originalForceOverwrite
+		syncMode = originalSyncMode
 		ignorePatterns = originalIgnorePatterns
 		ignoreFile = originalIgnoreFile
 		ignoreMatcher = originalIgnoreMatcher
 		syncCompare = originalSyncCompare
+		password = originalPassword
 	}
 }

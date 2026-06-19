@@ -13,6 +13,7 @@ var ignoreMatcher *ignore.GitIgnore
 
 func initializeIgnoreMatcher() error {
 	var patterns []string
+	ignoreMatcher = nil
 
 	if ignorePatterns != "" {
 		for pattern := range strings.SplitSeq(ignorePatterns, ",") {
