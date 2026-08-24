@@ -57,8 +57,7 @@ func checkS3ObjectExists(ctx context.Context, s3Client *s3.Client, bucket, key s
 
 	result, err := s3Client.HeadObject(ctx, headInput)
 	if err != nil {
-		var notFound *types.NoSuchKey
-		if errors.As(err, &notFound) {
+		if _, ok := errors.AsType[*types.NoSuchKey](err); ok {
 			return false, "", nil, nil
 		}
 		// Check for HTTP 404 status codes (which MinIO might return)
