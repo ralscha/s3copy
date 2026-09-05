@@ -20,58 +20,63 @@ func downloadFromS3(ctx context.Context) error {
 
 	downloader := manager.New(s3Client)
 
-	s3Path := strings.TrimPrefix(source, "s3://")
-	var s3Key string
+	parsedBucket, s3Key, err := parseS3Source(source, bucket)
+	if err != nil {
+		return err
+	}
+	bucket = parsedBucket
 
-	if bucket == "" {
-		parts := strings.SplitN(s3Path, "/", 2)
-		if len(parts) != 2 {
-			return fmt.Errorf("invalid S3 source format, use s3://bucket/key or specify bucket with -b flag")
+	objectExists := false
+	if s3Key != "" && !strings.HasSuffix(s3Key, "/") {
+		objectExists, _, _, err = checkS3ObjectExists(ctx, s3Client, bucket, s3Key)
+		if err != nil {
+			return fmt.Errorf("failed to inspect source object: %w", err)
 		}
-		bucket = parts[0]
-		s3Key = parts[1]
-	} else {
-		s3Key = strings.TrimPrefix(s3Path, bucket+"/")
 	}
 
-	_, err = s3Client.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(s3Key),
-	})
-
-	if err == nil {
+	if objectExists {
 		finalDestination := destination
 
-		if strings.HasSuffix(destination, "/") || destination == "." || destination == "./" {
-			filename := filepath.Base(s3Key)
-			finalDestination = filepath.Join(destination, filename)
+		if strings.HasSuffix(destination, "/") || strings.HasSuffix(destination, string(filepath.Separator)) || destination == "." || destination == "./" {
+			finalDestination, err = safeLocalPath(destination, pathBase(s3Key))
+			if err != nil {
+				return err
+			}
 		} else {
 			if info, err := os.Stat(destination); err == nil && info.IsDir() {
-				filename := filepath.Base(s3Key)
-				finalDestination = filepath.Join(destination, filename)
+				finalDestination, err = safeLocalPath(destination, pathBase(s3Key))
+				if err != nil {
+					return err
+				}
 			}
 		}
 
 		return downloadFile(ctx, downloader, s3Key, finalDestination)
 	}
 
+	prefix := s3Key
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
 	paginator := s3.NewListObjectsV2Paginator(s3Client, &s3.ListObjectsV2Input{
 		Bucket: aws.String(bucket),
-		Prefix: aws.String(s3Key),
+		Prefix: aws.String(prefix),
 	})
 
 	type downloadTask struct {
 		s3Key     string
 		localPath string
-	}
-
-	if err := os.MkdirAll(destination, 0755); err != nil {
-		return fmt.Errorf("failed to create destination directory: %w", err)
+		isDir     bool
 	}
 
 	return runWorkerPoolStream(ctx, maxWorkers, func(workerCtx context.Context, task downloadTask) error {
-		if err := os.MkdirAll(filepath.Dir(task.localPath), 0755); err != nil {
-			return fmt.Errorf("failed to create directory: %w", err)
+		if task.isDir {
+			if !dryRun {
+				if err := os.MkdirAll(task.localPath, 0755); err != nil {
+					return fmt.Errorf("failed to create directory %s: %w", task.localPath, err)
+				}
+			}
+			return nil
 		}
 
 		if err := downloadFile(workerCtx, downloader, task.s3Key, task.localPath); err != nil {
@@ -88,17 +93,37 @@ func downloadFromS3(ctx context.Context) error {
 			}
 
 			for _, obj := range result.Contents {
-				foundObjects = true
-
-				relPath := strings.TrimPrefix(*obj.Key, s3Key)
-				relPath = strings.TrimPrefix(relPath, "/")
-				if relPath == "" {
-					relPath = filepath.Base(*obj.Key)
+				if obj.Key == nil {
+					continue
 				}
 
+				relPath := strings.TrimPrefix(*obj.Key, prefix)
+				if relPath == "" {
+					if strings.HasSuffix(*obj.Key, "/") {
+						foundObjects = true
+						continue
+					}
+					relPath = pathBase(*obj.Key)
+				}
+				foundObjects = true
+
+				if shouldIgnoreFile(relPath) {
+					logInfo("Ignoring: %s\n", *obj.Key)
+					continue
+				}
+
+				isDir := strings.HasSuffix(*obj.Key, "/")
+				if isDir {
+					relPath = strings.TrimSuffix(relPath, "/")
+				}
+				localPath, pathErr := safeLocalPath(destination, relPath)
+				if pathErr != nil {
+					return fmt.Errorf("refusing unsafe S3 key %q: %w", *obj.Key, pathErr)
+				}
 				task := downloadTask{
 					s3Key:     *obj.Key,
-					localPath: filepath.Join(destination, relPath),
+					localPath: localPath,
+					isDir:     isDir,
 				}
 
 				select {
@@ -110,7 +135,7 @@ func downloadFromS3(ctx context.Context) error {
 		}
 
 		if !foundObjects {
-			return fmt.Errorf("no objects found with prefix: %s", s3Key)
+			return fmt.Errorf("no objects found with prefix: %s", prefix)
 		}
 
 		return nil
@@ -152,6 +177,10 @@ func downloadFileWithParams(ctx context.Context, downloader *manager.Client, buc
 		}
 	}
 
+	if err := os.MkdirAll(filepath.Dir(localPath), 0755); err != nil {
+		return fmt.Errorf("failed to create destination directory: %w", err)
+	}
+
 	if encrypt {
 		tempFile, err := os.CreateTemp(filepath.Dir(localPath), ".s3copy-tmp-*")
 		if err != nil {
@@ -159,8 +188,8 @@ func downloadFileWithParams(ctx context.Context, downloader *manager.Client, buc
 		}
 		tempPath := tempFile.Name()
 		defer func() {
-			if err := os.Remove(tempPath); err != nil {
-				fmt.Printf("Warning: failed to remove temp file %s: %v\n", tempPath, err)
+			if err := os.Remove(tempPath); err != nil && !os.IsNotExist(err) {
+				logVerbose("Warning: failed to remove temp file %s: %v\n", tempPath, err)
 			}
 		}()
 
@@ -189,7 +218,7 @@ func downloadFileWithParams(ctx context.Context, downloader *manager.Client, buc
 		decryptedTempPath := decryptedTempFile.Name()
 		defer func() {
 			if err := os.Remove(decryptedTempPath); err != nil && !os.IsNotExist(err) {
-				fmt.Printf("Warning: failed to remove temp file %s: %v\n", decryptedTempPath, err)
+				logVerbose("Warning: failed to remove temp file %s: %v\n", decryptedTempPath, err)
 			}
 		}()
 
@@ -216,7 +245,7 @@ func downloadFileWithParams(ctx context.Context, downloader *manager.Client, buc
 		tempPath := tempFile.Name()
 		defer func() {
 			if err := os.Remove(tempPath); err != nil && !os.IsNotExist(err) {
-				fmt.Printf("Warning: failed to remove temp file %s: %v\n", tempPath, err)
+				logVerbose("Warning: failed to remove temp file %s: %v\n", tempPath, err)
 			}
 		}()
 

@@ -28,7 +28,7 @@ func TestRunCopyValidation(t *testing.T) {
 
 		err := runCopy()
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "missing required environment variables")
+		assert.Contains(t, err.Error(), "must be set together")
 	})
 
 	t.Run("missing secret key", func(t *testing.T) {
@@ -46,7 +46,7 @@ func TestRunCopyValidation(t *testing.T) {
 
 		err := runCopy()
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "missing required environment variables")
+		assert.Contains(t, err.Error(), "must be set together")
 	})
 
 	t.Run("both source and destination are local", func(t *testing.T) {

@@ -12,6 +12,9 @@ import (
 )
 
 var (
+	version        = "dev"
+	commit         = "none"
+	date           = "unknown"
 	source         string
 	destination    string
 	bucket         string
@@ -37,8 +40,9 @@ var (
 
 func main() {
 	app := &cli.Command{
-		Name:  "s3copy",
-		Usage: "Copy files between local storage and S3-compatible storage with optional encryption",
+		Name:    "s3copy",
+		Usage:   "Copy files between local storage and S3-compatible storage with optional encryption",
+		Version: fmt.Sprintf("%s (commit %s, built %s)", version, commit, date),
 		Description: `A CLI tool to copy files between local storage and S3-compatible storage.
 Supports encryption using ChaCha20-Poly1305 with Argon2 key derivation.
 Can copy single files or directories with glob pattern support.
@@ -59,7 +63,7 @@ Supports gitignore-style file filtering for selective copying.`,
 			&cli.StringFlag{
 				Name:        "bucket",
 				Aliases:     []string{"b"},
-				Usage:       "S3 bucket name (required for S3 operations)",
+				Usage:       "S3 bucket name (optional when the S3 URI includes it)",
 				Destination: &bucket,
 			},
 			&cli.BoolFlag{
@@ -77,7 +81,7 @@ Supports gitignore-style file filtering for selective copying.`,
 			&cli.BoolFlag{
 				Name:        "recursive",
 				Aliases:     []string{"r"},
-				Usage:       "Copy directories recursively",
+				Usage:       "Upload local directories recursively",
 				Destination: &recursive,
 			},
 			&cli.StringFlag{
@@ -168,6 +172,12 @@ Supports gitignore-style file filtering for selective copying.`,
 			if maxWorkers < 1 {
 				return ctx, fmt.Errorf("max-workers must be at least 1")
 			}
+			if timeout < 0 {
+				return ctx, fmt.Errorf("timeout must be at least 0")
+			}
+			if retries < 0 {
+				return ctx, fmt.Errorf("retries must be at least 0")
+			}
 
 			if syncCompare != "checksum" && syncCompare != "size-time" {
 				return ctx, fmt.Errorf("sync-compare must be one of: checksum, size-time")
@@ -186,6 +196,10 @@ Supports gitignore-style file filtering for selective copying.`,
 				}
 
 				if syncMode {
+					if encrypt {
+						return ctx, fmt.Errorf("encryption is not supported in sync mode")
+					}
+
 					sourceIsS3 := strings.HasPrefix(source, "s3://")
 					destIsS3 := strings.HasPrefix(destination, "s3://")
 
@@ -234,30 +248,36 @@ Supports gitignore-style file filtering for selective copying.`,
 }
 
 func runCopy() error {
+	if syncMode && encrypt {
+		return fmt.Errorf("encryption is not supported in sync mode")
+	}
+
 	if err := godotenv.Load(envFile); err != nil {
 		if !os.IsNotExist(err) {
 			fmt.Fprintf(os.Stderr, "Warning: Could not load %s file: %v\n", envFile, err)
 		}
 	}
 
-	config = Config{
-		Endpoint:     getEnvOrDefault("S3COPY_ENDPOINT", ""),
-		AccessKey:    getEnvOrDefault("S3COPY_ACCESS_KEY", ""),
-		SecretKey:    getEnvOrDefault("S3COPY_SECRET_KEY", ""),
-		Region:       getEnvOrDefault("S3COPY_REGION", "us-east-1"),
-		UsePathStyle: getEnvOrDefault("S3COPY_USE_PATH_STYLE", "false") == "true",
+	loadedConfig, err := loadConfigFromEnv()
+	if err != nil {
+		return err
 	}
-
-	if config.AccessKey == "" || config.SecretKey == "" {
-		return fmt.Errorf("missing required environment variables (S3COPY_ACCESS_KEY, S3COPY_SECRET_KEY)")
-	}
+	config = loadedConfig
+	resetS3Client()
 
 	if err := initializeIgnoreMatcher(); err != nil {
 		return fmt.Errorf("error initializing ignore patterns: %w", err)
 	}
 
+	ctx := context.Background()
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+		defer cancel()
+	}
+
 	if listObjects {
-		if err := listS3Objects(); err != nil {
+		if err := listS3Objects(ctx); err != nil {
 			return fmt.Errorf("error listing objects: %w", err)
 		}
 		return nil
@@ -274,13 +294,6 @@ func runCopy() error {
 				return fmt.Errorf("empty password provided for encryption")
 			}
 		}
-	}
-
-	ctx := context.Background()
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
-		defer cancel()
 	}
 
 	if syncMode {

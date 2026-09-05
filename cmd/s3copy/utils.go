@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -35,6 +38,111 @@ func calculateFileMD5(filePath string) (string, error) {
 	}
 
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// safeLocalPath converts an S3-relative path to a path below root. S3 keys are
+// untrusted input: without this check, a key containing ".." (or a Windows
+// drive path) could write outside the requested download directory.
+func safeLocalPath(root, relativePath string) (string, error) {
+	cleaned, err := safeRelativePath(relativePath)
+	if err != nil {
+		return "", err
+	}
+
+	localRelative := filepath.FromSlash(cleaned)
+	if filepath.IsAbs(localRelative) || filepath.VolumeName(localRelative) != "" {
+		return "", fmt.Errorf("unsafe absolute path %q", relativePath)
+	}
+
+	joined := filepath.Join(root, localRelative)
+	rel, err := filepath.Rel(root, joined)
+	if err != nil {
+		return "", fmt.Errorf("resolve local path %q: %w", relativePath, err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("unsafe path traversal in %q", relativePath)
+	}
+
+	resolvedRoot, err := resolveExistingPath(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve download root: %w", err)
+	}
+	resolvedTarget, err := resolveExistingPath(joined)
+	if err != nil {
+		return "", fmt.Errorf("resolve local path %q: %w", relativePath, err)
+	}
+	resolvedRel, err := filepath.Rel(resolvedRoot, resolvedTarget)
+	if err != nil || resolvedRel == ".." || strings.HasPrefix(resolvedRel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("unsafe symlink traversal in %q", relativePath)
+	}
+
+	return joined, nil
+}
+
+// resolveExistingPath resolves symlinks in the existing portion of a path and
+// appends any not-yet-created suffix. This catches a destination child that is
+// already a symlink outside the chosen download root.
+func resolveExistingPath(filePath string) (string, error) {
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return "", err
+	}
+
+	current := filepath.Clean(absPath)
+	var missing []string
+	for {
+		_, statErr := os.Lstat(current)
+		if statErr == nil {
+			break
+		}
+		if !os.IsNotExist(statErr) {
+			return "", statErr
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", statErr
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
+
+	resolved, err := filepath.EvalSymlinks(current)
+	if err != nil {
+		return "", err
+	}
+	for i := len(missing) - 1; i >= 0; i-- {
+		resolved = filepath.Join(resolved, missing[i])
+	}
+	return filepath.Clean(resolved), nil
+}
+
+func safeRelativePath(relativePath string) (string, error) {
+	if strings.Contains(relativePath, "\\") {
+		return "", fmt.Errorf("unsafe non-portable path %q", relativePath)
+	}
+	normalized := relativePath
+	if normalized == "" || strings.ContainsRune(normalized, '\x00') {
+		return "", fmt.Errorf("unsafe empty local path")
+	}
+	if strings.HasPrefix(normalized, "/") {
+		return "", fmt.Errorf("unsafe absolute path %q", relativePath)
+	}
+
+	for _, segment := range strings.Split(normalized, "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return "", fmt.Errorf("unsafe non-canonical path %q", relativePath)
+		}
+	}
+
+	cleaned := path.Clean(normalized)
+	if cleaned == "." {
+		return "", fmt.Errorf("unsafe empty local path")
+	}
+	if len(cleaned) >= 2 && cleaned[1] == ':' && ((cleaned[0] >= 'a' && cleaned[0] <= 'z') || (cleaned[0] >= 'A' && cleaned[0] <= 'Z')) {
+		return "", fmt.Errorf("unsafe absolute path %q", relativePath)
+	}
+	return cleaned, nil
 }
 
 // runWorkerPool executes tasks using a worker pool pattern with context support
@@ -167,12 +275,17 @@ func runWorkerPoolStream[T any](ctx context.Context, maxWorkers int, worker func
 	go func() {
 		defer close(producerDone)
 		defer close(taskChan)
-		if err := producer(workerCtx, taskChan); err != nil && !errors.Is(err, context.Canceled) {
-			select {
-			case errChan <- err:
-			default:
+		if err := producer(workerCtx, taskChan); err != nil {
+			// A canceled producer is expected only when a worker (or the parent
+			// context) already canceled the shared context. An independently
+			// returned context.Canceled is still a real producer error.
+			if !errors.Is(err, context.Canceled) || workerCtx.Err() == nil {
+				select {
+				case errChan <- err:
+				default:
+				}
+				cancel()
 			}
-			cancel()
 		}
 	}()
 
@@ -221,7 +334,7 @@ func logInfo(format string, args ...any) {
 }
 
 func logVerbose(format string, args ...any) {
-	if verbose {
+	if verbose && !quiet {
 		fmt.Printf(format, args...)
 	}
 }

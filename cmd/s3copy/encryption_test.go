@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/binary"
 	"fmt"
 	"testing"
 
@@ -109,6 +110,28 @@ func TestEncryptDecryptStream(t *testing.T) {
 			decryptedData = []byte{}
 		}
 		assert.Equal(t, originalData, decryptedData)
+	})
+
+	t.Run("empty data authenticates password", func(t *testing.T) {
+		password = "correct-password"
+		encrypted := &bytes.Buffer{}
+		require.NoError(t, encryptStream(encrypted, bytes.NewReader(nil)))
+		assert.Greater(t, encrypted.Len(), 44)
+
+		password = "wrong-password"
+		err := decryptStreamFromReader(&bytes.Buffer{}, bytes.NewReader(encrypted.Bytes()))
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "decryption failed")
+	})
+
+	t.Run("reject oversized encrypted chunk", func(t *testing.T) {
+		password = "testpassword123"
+		malformed := make([]byte, 48)
+		binary.BigEndian.PutUint32(malformed[44:], uint32(maxEncryptedChunkSize+1))
+
+		err := decryptStreamFromReader(&bytes.Buffer{}, bytes.NewReader(malformed))
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid encrypted chunk size")
 	})
 
 	t.Run("large data", func(t *testing.T) {

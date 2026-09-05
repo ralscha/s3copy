@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +12,39 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSafeLocalPath(t *testing.T) {
+	root := t.TempDir()
+
+	got, err := safeLocalPath(root, "nested/file.txt")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(root, "nested", "file.txt"), got)
+
+	unsafePaths := []string{
+		"../escape.txt",
+		"nested/../../escape.txt",
+		"/absolute.txt",
+		`C:\absolute.txt`,
+		`..\escape.txt`,
+		"",
+	}
+	for _, unsafePath := range unsafePaths {
+		t.Run(unsafePath, func(t *testing.T) {
+			_, err := safeLocalPath(root, unsafePath)
+			assert.Error(t, err)
+		})
+	}
+
+	outside := t.TempDir()
+	link := filepath.Join(root, "outside-link")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Logf("symlink test skipped: %v", err)
+	} else {
+		_, err := safeLocalPath(root, "outside-link/escape.txt")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "symlink traversal")
+	}
+}
 
 func TestFormatBytes(t *testing.T) {
 	tests := []struct {
@@ -106,6 +140,7 @@ func TestLogFunctions(t *testing.T) {
 	})
 
 	t.Run("logVerbose when verbose", func(t *testing.T) {
+		quiet = false
 		verbose = true
 		output := captureStdout(func() {
 			logVerbose("verbose message %d", 42)
@@ -182,6 +217,17 @@ func TestRunWorkerPoolStream(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Equal(t, expectedErr, err)
+	})
+
+	t.Run("returns independent producer cancellation", func(t *testing.T) {
+		err := runWorkerPoolStream(context.Background(), 1, func(ctx context.Context, task int) error {
+			return nil
+		}, func(ctx context.Context, taskChan chan<- int) error {
+			return context.Canceled
+		})
+
+		require.Error(t, err)
+		assert.ErrorIs(t, err, context.Canceled)
 	})
 
 	t.Run("processes streamed tasks", func(t *testing.T) {

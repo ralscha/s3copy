@@ -72,6 +72,24 @@ func TestParseS3Path(t *testing.T) {
 			expectError:    true,
 		},
 		{
+			name:           "file without bucket",
+			s3Path:         "s3://",
+			providedBucket: "",
+			isDir:          false,
+			localPath:      "/tmp/file.txt",
+			expectError:    true,
+		},
+		{
+			name:           "directory at bucket root",
+			s3Path:         "s3://mybucket",
+			providedBucket: "",
+			isDir:          true,
+			localPath:      "/tmp/dir",
+			expectedBucket: "mybucket",
+			expectedKey:    "",
+			expectError:    false,
+		},
+		{
 			name:           "bucket with trailing slash, no provided bucket, not dir",
 			s3Path:         "s3://mybucket/",
 			providedBucket: "",
@@ -124,6 +142,36 @@ func TestParseS3Path(t *testing.T) {
 				assert.Equal(t, tt.expectedBucket, bucket)
 				assert.Equal(t, tt.expectedKey, key)
 			}
+		})
+	}
+}
+
+func TestParseS3Source(t *testing.T) {
+	tests := []struct {
+		name           string
+		source         string
+		providedBucket string
+		wantBucket     string
+		wantKey        string
+		wantError      bool
+	}{
+		{name: "object", source: "s3://bucket/path/file.txt", wantBucket: "bucket", wantKey: "path/file.txt"},
+		{name: "whole bucket", source: "s3://bucket", wantBucket: "bucket", wantKey: ""},
+		{name: "provided bucket", source: "s3://bucket/path", providedBucket: "bucket", wantBucket: "bucket", wantKey: "path"},
+		{name: "empty", source: "s3://", wantError: true},
+		{name: "not S3", source: "bucket/path", wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotBucket, gotKey, err := parseS3Source(tt.source, tt.providedBucket)
+			if tt.wantError {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantBucket, gotBucket)
+			assert.Equal(t, tt.wantKey, gotKey)
 		})
 	}
 }
@@ -222,7 +270,7 @@ func TestListS3ObjectsDetailed(t *testing.T) {
 		verbose = false
 
 		output := captureStdout(func() {
-			err := listS3Objects()
+			err := listS3Objects(ctx)
 			assert.NoError(t, err)
 		})
 		assert.Contains(t, output, "file1.txt")
@@ -241,7 +289,7 @@ func TestListS3ObjectsDetailed(t *testing.T) {
 		verbose = false
 
 		output := captureStdout(func() {
-			err := listS3Objects()
+			err := listS3Objects(ctx)
 			assert.NoError(t, err)
 		})
 		assert.NotContains(t, output, "file1.txt")

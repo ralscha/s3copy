@@ -62,13 +62,22 @@ func TestDownloadFromS3SingleFile(t *testing.T) {
 
 	t.Run("download single file with trailing slash", func(t *testing.T) {
 		destDir := t.TempDir()
-		setTestConfig(fmt.Sprintf("s3://%s/%s", bucketName, testKey), destDir+"/", bucketName, false, false, true, false)
+		setTestConfig(fmt.Sprintf("s3://%s/%s", bucketName, testKey), destDir+string(filepath.Separator), bucketName, false, false, true, false)
 
 		err := downloadFromS3(ctx)
 		assert.NoError(t, err)
 
 		expectedFile := filepath.Join(destDir, testKey)
 		assert.FileExists(t, expectedFile)
+	})
+
+	t.Run("download creates destination parents", func(t *testing.T) {
+		destFile := filepath.Join(t.TempDir(), "new", "nested", "downloaded.txt")
+		setTestConfig(fmt.Sprintf("s3://%s/%s", bucketName, testKey), destFile, bucketName, false, false, true, false)
+
+		err := downloadFromS3(ctx)
+		require.NoError(t, err)
+		assert.FileExists(t, destFile)
 	})
 }
 
@@ -273,6 +282,7 @@ func TestDownloadDirectory(t *testing.T) {
 		"dir/sub/file3.txt":   []byte("content 3"),
 		"dir/sub/file4.txt":   []byte("content 4"),
 		"other/unrelated.txt": []byte("unrelated"),
+		"dir-other/unwanted":  []byte("must not match dir prefix"),
 	}
 
 	for key, content := range testFiles {
@@ -286,7 +296,9 @@ func TestDownloadDirectory(t *testing.T) {
 
 	t.Run("download directory recursively", func(t *testing.T) {
 		destDir := t.TempDir()
-		setTestConfig(fmt.Sprintf("s3://%s/dir/", bucketName), destDir, bucketName, false, false, true, false)
+		// An omitted trailing slash still means the exact directory prefix;
+		// similarly named prefixes such as dir-other must not match.
+		setTestConfig(fmt.Sprintf("s3://%s/dir", bucketName), destDir, bucketName, false, false, true, false)
 
 		err := downloadFromS3(ctx)
 		assert.NoError(t, err)
@@ -304,6 +316,7 @@ func TestDownloadDirectory(t *testing.T) {
 
 		unexpectedFile := filepath.Join(destDir, "other", "unrelated.txt")
 		assert.NoFileExists(t, unexpectedFile)
+		assert.NoFileExists(t, filepath.Join(destDir, "-other", "unwanted"))
 	})
 }
 

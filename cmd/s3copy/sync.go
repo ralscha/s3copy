@@ -62,21 +62,9 @@ func syncDirectories(ctx context.Context) error {
 func syncS3ToLocal(ctx context.Context, s3Client *s3.Client) (SyncResult, error) {
 	var result SyncResult
 
-	s3Path := strings.TrimPrefix(source, "s3://")
-	var s3Bucket, s3Prefix string
-
-	if bucket == "" {
-		parts := strings.SplitN(s3Path, "/", 2)
-		if len(parts) < 1 {
-			return result, fmt.Errorf("invalid S3 source format")
-		}
-		s3Bucket = parts[0]
-		if len(parts) > 1 {
-			s3Prefix = parts[1]
-		}
-	} else {
-		s3Bucket = bucket
-		s3Prefix = strings.TrimPrefix(s3Path, s3Bucket+"/")
+	s3Bucket, s3Prefix, err := parseS3Source(source, bucket)
+	if err != nil {
+		return result, fmt.Errorf("invalid S3 sync source: %w", err)
 	}
 
 	if s3Prefix != "" && !strings.HasSuffix(s3Prefix, "/") {
@@ -88,9 +76,14 @@ func syncS3ToLocal(ctx context.Context, s3Client *s3.Client) (SyncResult, error)
 		return result, fmt.Errorf("failed to list S3 files: %v", err)
 	}
 
-	localFiles, err := listLocalFilesWithOptions(destination, shouldUseChecksumCompare())
-	if err != nil {
-		return result, fmt.Errorf("failed to list local files: %v", err)
+	var localFiles []FileInfo
+	if _, statErr := os.Stat(destination); statErr == nil {
+		localFiles, err = listLocalFilesWithOptions(destination, shouldUseChecksumCompare())
+		if err != nil {
+			return result, fmt.Errorf("failed to list local files: %w", err)
+		}
+	} else if !os.IsNotExist(statErr) {
+		return result, fmt.Errorf("failed to inspect local destination: %w", statErr)
 	}
 
 	s3FileMap := make(map[string]FileInfo)
@@ -141,21 +134,9 @@ func syncS3ToLocal(ctx context.Context, s3Client *s3.Client) (SyncResult, error)
 func syncLocalToS3(ctx context.Context, s3Client *s3.Client) (SyncResult, error) {
 	var result SyncResult
 
-	s3Path := strings.TrimPrefix(destination, "s3://")
-	var s3Bucket, s3Prefix string
-
-	if bucket == "" {
-		parts := strings.SplitN(s3Path, "/", 2)
-		if len(parts) < 1 {
-			return result, fmt.Errorf("invalid S3 destination format")
-		}
-		s3Bucket = parts[0]
-		if len(parts) > 1 {
-			s3Prefix = parts[1]
-		}
-	} else {
-		s3Bucket = bucket
-		s3Prefix = strings.TrimPrefix(s3Path, s3Bucket+"/")
+	s3Bucket, s3Prefix, err := parseS3Source(destination, bucket)
+	if err != nil {
+		return result, fmt.Errorf("invalid S3 sync destination: %w", err)
 	}
 
 	if s3Prefix != "" && !strings.HasSuffix(s3Prefix, "/") {
@@ -164,12 +145,12 @@ func syncLocalToS3(ctx context.Context, s3Client *s3.Client) (SyncResult, error)
 
 	localFiles, err := listLocalFilesWithOptions(source, shouldUseChecksumCompare())
 	if err != nil {
-		return result, fmt.Errorf("failed to list local files: %v", err)
+		return result, fmt.Errorf("failed to list local files: %w", err)
 	}
 
 	s3Files, err := listS3Files(ctx, s3Client, s3Bucket, s3Prefix)
 	if err != nil {
-		return result, fmt.Errorf("failed to list S3 files: %v", err)
+		return result, fmt.Errorf("failed to list S3 files: %w", err)
 	}
 
 	localFileMap := make(map[string]FileInfo)
@@ -250,6 +231,14 @@ func listS3Files(ctx context.Context, s3Client *s3.Client, bucket, prefix string
 
 			if relPath == "" {
 				continue
+			}
+			if strings.HasSuffix(key, "/") {
+				continue
+			}
+
+			relPath, err = safeRelativePath(relPath)
+			if err != nil {
+				return nil, fmt.Errorf("refusing unsafe S3 key %q: %w", key, err)
 			}
 
 			if shouldIgnoreFile(relPath) {
@@ -463,10 +452,14 @@ func downloadFiles(ctx context.Context, s3Client *s3.Client, bucket string, file
 		return nil
 	}, func(producerCtx context.Context, taskChan chan<- downloadSyncTask) error {
 		for _, file := range files {
+			destPath, err := safeLocalPath(destination, file.RelPath)
+			if err != nil {
+				return fmt.Errorf("refusing unsafe S3 key %q: %w", file.Path, err)
+			}
 			task := downloadSyncTask{
 				file:       file,
 				bucket:     bucket,
-				destPath:   filepath.Join(destination, filepath.FromSlash(file.RelPath)),
+				destPath:   destPath,
 				downloader: downloader,
 			}
 

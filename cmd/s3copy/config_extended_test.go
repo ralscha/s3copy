@@ -58,6 +58,54 @@ func TestCreateS3Config(t *testing.T) {
 	})
 }
 
+func TestLoadConfigFromEnv(t *testing.T) {
+	for _, key := range []string{
+		"S3COPY_ENDPOINT",
+		"S3COPY_ACCESS_KEY",
+		"S3COPY_SECRET_KEY",
+		"S3COPY_SESSION_TOKEN",
+		"S3COPY_REGION",
+		"S3COPY_USE_PATH_STYLE",
+	} {
+		t.Setenv(key, "")
+	}
+
+	t.Run("default credential chain", func(t *testing.T) {
+		loaded, err := loadConfigFromEnv()
+		require.NoError(t, err)
+		assert.Empty(t, loaded.AccessKey)
+		assert.Empty(t, loaded.SecretKey)
+		assert.Equal(t, "us-east-1", loaded.Region)
+	})
+
+	t.Run("static credentials with session token", func(t *testing.T) {
+		t.Setenv("S3COPY_ACCESS_KEY", "access")
+		t.Setenv("S3COPY_SECRET_KEY", "secret")
+		t.Setenv("S3COPY_SESSION_TOKEN", "token")
+		t.Setenv("S3COPY_USE_PATH_STYLE", "TRUE")
+
+		loaded, err := loadConfigFromEnv()
+		require.NoError(t, err)
+		assert.Equal(t, "token", loaded.SessionToken)
+		assert.True(t, loaded.UsePathStyle)
+	})
+
+	t.Run("partial static credentials", func(t *testing.T) {
+		t.Setenv("S3COPY_ACCESS_KEY", "access")
+		t.Setenv("S3COPY_SECRET_KEY", "")
+		t.Setenv("S3COPY_SESSION_TOKEN", "")
+		_, err := loadConfigFromEnv()
+		assert.Error(t, err)
+	})
+
+	t.Run("invalid path style", func(t *testing.T) {
+		t.Setenv("S3COPY_ACCESS_KEY", "")
+		t.Setenv("S3COPY_USE_PATH_STYLE", "sometimes")
+		_, err := loadConfigFromEnv()
+		assert.Error(t, err)
+	})
+}
+
 func TestGetS3Client(t *testing.T) {
 	restore := preserveGlobalVars()
 	defer restore()

@@ -294,6 +294,19 @@ func TestSyncS3ToLocal(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	t.Run("sync creates a missing destination", func(t *testing.T) {
+		missingDir := filepath.Join(t.TempDir(), "not-created-yet")
+		source = fmt.Sprintf("s3://%s/%s", bucketName, s3Prefix)
+		destination = missingDir
+		bucket = bucketName
+		quiet = true
+
+		result, err := syncS3ToLocal(ctx, s3Client)
+		require.NoError(t, err)
+		assert.Len(t, result.Downloaded, len(testFiles))
+		assert.FileExists(t, filepath.Join(missingDir, "document1.txt"))
+	})
+
 	tempDir := t.TempDir()
 
 	t.Run("Initial sync - download all files", func(t *testing.T) {

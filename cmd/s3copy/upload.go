@@ -28,35 +28,20 @@ func uploadToS3(ctx context.Context) error {
 	}
 
 	if len(matches) == 0 {
-		info, err := os.Stat(source)
-		if err != nil {
-			return fmt.Errorf("failed to stat source: %w", err)
+		if _, statErr := os.Stat(source); statErr != nil {
+			return fmt.Errorf("failed to stat source %s: %w", source, statErr)
 		}
-
-		parsedBucket, s3Key, err := parseS3Path(destination, bucket, info.IsDir(), source)
-		if err != nil {
-			return err
-		}
-
-		if parsedBucket != "" {
-			bucket = parsedBucket
-		}
-
-		if info.IsDir() {
-			if !recursive {
-				return fmt.Errorf("source is a directory, use -r flag for recursive copy")
-			}
-			return uploadDirectory(ctx, uploader, source, s3Key)
-		}
-
-		return uploadFile(ctx, uploader, source, s3Key)
+		return fmt.Errorf("source pattern matched no files: %s", source)
 	}
 
 	var parsedBucket, s3Key string
 
 	if len(matches) == 1 {
 		info, statErr := os.Stat(matches[0])
-		isDir := statErr == nil && info.IsDir()
+		if statErr != nil {
+			return fmt.Errorf("failed to stat source %s: %w", matches[0], statErr)
+		}
+		isDir := info.IsDir()
 
 		if isDir && !recursive {
 			return fmt.Errorf("source is a directory, use -r flag for recursive copy")
@@ -236,8 +221,12 @@ func uploadFileWithParams(ctx context.Context, uploader *manager.Client, bucketN
 
 		errChan := make(chan error, 1)
 		go func() {
-			defer closeWithLog(pipeWriter, "pipe writer")
-			errChan <- encryptStream(pipeWriter, file)
+			encryptionErr := encryptStream(pipeWriter, file)
+			closeErr := pipeWriter.CloseWithError(encryptionErr)
+			if encryptionErr == nil && closeErr != nil {
+				encryptionErr = fmt.Errorf("failed to close encryption stream: %w", closeErr)
+			}
+			errChan <- encryptionErr
 		}()
 
 		putInput := &manager.UploadObjectInput{

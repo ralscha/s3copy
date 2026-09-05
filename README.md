@@ -33,6 +33,8 @@ Create a `.env` file in the same directory as the executable:
 S3COPY_ENDPOINT=https://s3.sbg.io.cloud.ovh.net/
 S3COPY_ACCESS_KEY=your_access_key_here
 S3COPY_SECRET_KEY=your_secret_key_here
+# S3COPY_SESSION_TOKEN is optional and supports temporary credentials
+# S3COPY_SESSION_TOKEN=your_session_token_here
 # S3COPY_REGION is optional - defaults to us-east-1 if not specified
 S3COPY_REGION=us-east-1
 # S3COPY_USE_PATH_STYLE is optional - defaults to false. Set to true for MinIO or other services requiring path-style URLs
@@ -41,7 +43,10 @@ S3COPY_USE_PATH_STYLE=false
 
 You can also specify a custom `.env` file path using the `--env` flag.
 
-Credentials are currently required for all commands, including `--list`.
+Static `S3COPY_ACCESS_KEY`/`S3COPY_SECRET_KEY` credentials are optional. When
+they are omitted, s3copy uses the standard AWS credential chain (environment,
+shared config/credentials files, web identity, ECS, or EC2 role credentials).
+If one static credential is set, both must be set.
 
 ## Usage
 
@@ -59,6 +64,9 @@ Credentials are currently required for all commands, including `--list`.
 
 # Download directory
 ./s3copy -s s3://mybucket/backup/ -d ./restored_files/
+
+# Download an entire bucket
+./s3copy -s s3://mybucket -d ./bucket-backup/
 
 # Upload with encryption
 ./s3copy -s localfile.txt -d s3://mybucket/encrypted_file.txt -e -p mypassword
@@ -90,10 +98,10 @@ When copying single files (not directories), intelligent path handling is applie
 
 - `-s, --source`: Source path (local file/directory or s3://bucket/key)
 - `-d, --destination`: Destination path (local file/directory or s3://bucket/key)
-- `-b, --bucket`: S3 bucket name (required for S3 operations)
+- `-b, --bucket`: S3 bucket name (optional when the S3 URI includes it; required for `--list`)
 - `-e, --encrypt`: Enable encryption/decryption (required for both encrypting and decrypting files)
 - `-p, --password`: Encryption password (omit value to prompt interactively)
-- `-r, --recursive`: Copy directories recursively
+- `-r, --recursive`: Upload local directories recursively
 - `-l, --list`: List objects in bucket
 - `-f, --filter`: Filter objects by prefix (used with --list)
 - `--detailed`: Show detailed information when listing (storage class, ETag, etc.)
@@ -109,6 +117,7 @@ When copying single files (not directories), intelligent path handling is applie
 - `--force, --force-overwrite`: Force overwrite files even if they exist with same checksum. By default, existing files with same checksum are skipped (default: false)
 - `--sync`: Enable sync mode to make destination directory exactly match source directory (one-way sync)
 - `--sync-compare`: Sync compare strategy: `checksum` (default) or `size-time`
+- `--version`: Show version, commit, and build date information
 
 ## Checksum-Based Skip Optimization
 
@@ -160,6 +169,7 @@ Example:
 - **One-Way Operation**: Source is always master; destination is modified to match source
 - **Destructive Operation**: Files in destination that don't exist in source will be deleted
 - **S3 to S3**: Direct S3-to-S3 sync is not supported (use local as intermediary)
+- **Encryption**: `--encrypt` is not supported in sync mode; regular copy operations support it
 - **Safety**: Always test with `--dry-run` first to verify the intended operations
 - **Backup**: Consider backing up important data before running sync operations
 
@@ -214,7 +224,7 @@ Use it:
 
 ## Encryption
 
-Encryption uses ChaCha20-Poly1305 (authenticated encryption) with Argon2id key derivation (3 iterations, 64 MB memory, 4 threads). Each encrypted file contains: `[32-byte salt][12-byte nonce][encrypted data]`
+Encryption uses ChaCha20-Poly1305 (authenticated encryption) with Argon2id key derivation (3 iterations, 64 MB memory, 4 threads). Data is framed in bounded 1 MiB chunks after a 32-byte salt and 12-byte base nonce. Empty files include an authenticated empty chunk so an incorrect password is detected.
 
 ## Development
 

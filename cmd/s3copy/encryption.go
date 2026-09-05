@@ -10,10 +10,7 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
-type EncryptionParams struct {
-	Salt  []byte
-	Nonce []byte
-}
+const maxEncryptedChunkSize = DefaultEncryptionChunkSize + chacha20poly1305.Overhead
 
 // NonceManager handles secure nonce generation for chunked encryption
 type NonceManager struct {
@@ -66,10 +63,10 @@ func encryptStream(writer io.Writer, reader io.Reader) error {
 		return err
 	}
 
-	if _, err := writer.Write(salt); err != nil {
+	if err := writeBytes(writer, salt); err != nil {
 		return fmt.Errorf("failed to write salt: %v", err)
 	}
-	if _, err := writer.Write(nonceManager.GetBaseNonce()); err != nil {
+	if err := writeBytes(writer, nonceManager.GetBaseNonce()); err != nil {
 		return fmt.Errorf("failed to write base nonce: %v", err)
 	}
 
@@ -81,30 +78,44 @@ func encryptStream(writer io.Writer, reader io.Reader) error {
 	}
 
 	buf := make([]byte, DefaultEncryptionChunkSize)
-	chunkCount := uint64(0)
+	wroteChunk := false
+	writeChunk := func(plaintext []byte) error {
+		chunkNonce := nonceManager.NextNonce()
+		encryptedChunk := aead.Seal(nil, chunkNonce, plaintext, nil)
+		chunkSizeBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(chunkSizeBytes, uint32(len(encryptedChunk)))
+
+		if err := writeBytes(writer, chunkSizeBytes); err != nil {
+			return fmt.Errorf("failed to write chunk size: %v", err)
+		}
+		if err := writeBytes(writer, encryptedChunk); err != nil {
+			return fmt.Errorf("failed to write encrypted chunk: %v", err)
+		}
+		wroteChunk = true
+		return nil
+	}
 
 	for {
 		n, err := reader.Read(buf)
 		if n > 0 {
-			chunkNonce := nonceManager.NextNonce()
-			encryptedChunk := aead.Seal(nil, chunkNonce, buf[:n], nil)
-			chunkSizeBytes := make([]byte, 4)
-			binary.BigEndian.PutUint32(chunkSizeBytes, uint32(len(encryptedChunk)))
-
-			if _, writeErr := writer.Write(chunkSizeBytes); writeErr != nil {
-				return fmt.Errorf("failed to write chunk size: %v", writeErr)
+			if writeErr := writeChunk(buf[:n]); writeErr != nil {
+				return writeErr
 			}
-			if _, writeErr := writer.Write(encryptedChunk); writeErr != nil {
-				return fmt.Errorf("failed to write encrypted chunk: %v", writeErr)
-			}
-
-			chunkCount++
 		}
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
 			return fmt.Errorf("failed to read from source: %v", err)
+		}
+	}
+
+	// Authenticate empty files too. Older files containing only the 44-byte
+	// header remain readable, while newly encrypted empty files now detect a
+	// wrong password or a corrupted header.
+	if !wroteChunk {
+		if err := writeChunk(nil); err != nil {
+			return err
 		}
 	}
 
@@ -143,6 +154,9 @@ func decryptStreamFromReader(writer io.Writer, reader io.Reader) error {
 		}
 
 		chunkSize := binary.BigEndian.Uint32(chunkSizeBytes)
+		if chunkSize < chacha20poly1305.Overhead || chunkSize > maxEncryptedChunkSize {
+			return fmt.Errorf("invalid encrypted chunk size: %d", chunkSize)
+		}
 
 		encryptedChunk := make([]byte, chunkSize)
 		if _, err := io.ReadFull(reader, encryptedChunk); err != nil {
@@ -155,10 +169,24 @@ func decryptStreamFromReader(writer io.Writer, reader io.Reader) error {
 			return fmt.Errorf("decryption failed (wrong password or corrupted data?): %v", err)
 		}
 
-		if _, err := writer.Write(plaintext); err != nil {
+		if err := writeBytes(writer, plaintext); err != nil {
 			return fmt.Errorf("failed to write decrypted data: %v", err)
 		}
 	}
 
+	return nil
+}
+
+func writeBytes(writer io.Writer, data []byte) error {
+	for len(data) > 0 {
+		n, err := writer.Write(data)
+		if err != nil {
+			return err
+		}
+		if n <= 0 || n > len(data) {
+			return io.ErrShortWrite
+		}
+		data = data[n:]
+	}
 	return nil
 }

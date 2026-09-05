@@ -52,7 +52,7 @@ func TestS3UploadDownload(t *testing.T) {
 		verbose = false
 
 		output := captureStdout(func() {
-			err := listS3Objects()
+			err := listS3Objects(ctx)
 			assert.NoError(t, err)
 		})
 		assert.Contains(t, output, s3Key)
