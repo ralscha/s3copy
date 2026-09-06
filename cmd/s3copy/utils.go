@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -111,8 +112,8 @@ func resolveExistingPath(filePath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for i := len(missing) - 1; i >= 0; i-- {
-		resolved = filepath.Join(resolved, missing[i])
+	for _, m := range slices.Backward(missing) {
+		resolved = filepath.Join(resolved, m)
 	}
 	return filepath.Clean(resolved), nil
 }
@@ -129,7 +130,7 @@ func safeRelativePath(relativePath string) (string, error) {
 		return "", fmt.Errorf("unsafe absolute path %q", relativePath)
 	}
 
-	for _, segment := range strings.Split(normalized, "/") {
+	for segment := range strings.SplitSeq(normalized, "/") {
 		if segment == "" || segment == "." || segment == ".." {
 			return "", fmt.Errorf("unsafe non-canonical path %q", relativePath)
 		}
