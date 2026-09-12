@@ -19,8 +19,7 @@ func TestDownloadFromS3SingleFile(t *testing.T) {
 	ctx := context.Background()
 	bucketName := "test-download-single-bucket"
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	testContent := []byte("test content for single file download")
 	testKey := "test-file.txt"
@@ -85,8 +84,7 @@ func TestDownloadFromS3WithSkipExisting(t *testing.T) {
 	ctx := context.Background()
 	bucketName := "test-skip-existing-bucket"
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	testContent := []byte("test content for skip existing")
 	testKey := "skip-test.txt"
@@ -121,8 +119,7 @@ func TestDownloadFromS3WithEncryption(t *testing.T) {
 	ctx := context.Background()
 	bucketName := "test-encrypted-download-bucket"
 
-	_, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	setupRustFSTest(t, ctx, bucketName)
 
 	originalContent := []byte("secret content to encrypt")
 	testKey := "encrypted-file.txt"
@@ -171,8 +168,7 @@ func TestDownloadFromS3Errors(t *testing.T) {
 	ctx := context.Background()
 	bucketName := "test-download-errors-bucket"
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	t.Run("download non-existent object", func(t *testing.T) {
 		destFile := filepath.Join(t.TempDir(), "output.txt")
@@ -220,8 +216,7 @@ func TestDownloadFileWithParams(t *testing.T) {
 	ctx := context.Background()
 	bucketName := "test-download-params-bucket"
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	testKey := "params-test.txt"
 	testContent := []byte("content for params test")
@@ -273,8 +268,7 @@ func TestDownloadDirectory(t *testing.T) {
 	ctx := context.Background()
 	bucketName := "test-download-directory-bucket"
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	testFiles := map[string][]byte{
 		"dir/file1.txt":       []byte("content 1"),
@@ -324,8 +318,7 @@ func TestDownloadDirectoryWithPagination(t *testing.T) {
 	ctx := context.Background()
 	bucketName := "test-download-pagination-bucket"
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	const fileCount = 1105
 	for i := range fileCount {

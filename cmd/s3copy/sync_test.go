@@ -130,8 +130,7 @@ func TestSyncLocalToS3(t *testing.T) {
 	restore := preserveGlobalVars()
 	defer restore()
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	tempDir := t.TempDir()
 	testFiles := map[string]string{
@@ -272,8 +271,7 @@ func TestSyncS3ToLocal(t *testing.T) {
 	restore := preserveGlobalVars()
 	defer restore()
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	s3Prefix := "test-data/"
 	testFiles := map[string]string{
@@ -436,8 +434,7 @@ func TestSyncWithIgnorePatterns(t *testing.T) {
 	restore := preserveGlobalVars()
 	defer restore()
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	tempDir := t.TempDir()
 
@@ -501,8 +498,7 @@ func TestSyncBidirectional(t *testing.T) {
 	restore := preserveGlobalVars()
 	defer restore()
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	localDir1 := filepath.Join(t.TempDir(), "env1")
 	localDir2 := filepath.Join(t.TempDir(), "env2")
@@ -606,8 +602,7 @@ func TestSyncLargeFiles(t *testing.T) {
 	restore := preserveGlobalVars()
 	defer restore()
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	tempDir := t.TempDir()
 
@@ -693,8 +688,7 @@ func TestSyncErrorHandling(t *testing.T) {
 	restore := preserveGlobalVars()
 	defer restore()
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	tempDir := t.TempDir()
 
@@ -791,8 +785,7 @@ func TestSyncDryRun(t *testing.T) {
 	restore := preserveGlobalVars()
 	defer restore()
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	tempDir := t.TempDir()
 

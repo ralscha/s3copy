@@ -234,7 +234,7 @@ go test -race ./cmd/s3copy
 go vet ./cmd/s3copy
 ```
 
-The S3 transfer tests use Testcontainers with MinIO and require a working Docker daemon. When Docker is unavailable, those integration tests are skipped; pure unit tests still run.
+The S3 transfer tests use Testcontainers with [RustFS](https://docs.rustfs.com/en/installation/container/docker) (`rustfs/rustfs:1.0.0-rc.5`) and require a working Docker daemon. Each test starts an isolated container, waits for the S3 readiness endpoint, and automatically removes the container and its data when the test ends. When Docker is unavailable, those integration tests are skipped; image pull or RustFS startup failures fail the tests. Pure unit tests still run without Docker.
 
 ## License
 

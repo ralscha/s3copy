@@ -17,8 +17,7 @@ func TestDownloadFromS3Directory(t *testing.T) {
 	ctx := context.Background()
 	bucketName := "test-download-dir-bucket"
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	testObjects := []string{
 		"prefix/file1.txt",

@@ -180,8 +180,7 @@ func TestCheckS3ObjectExists(t *testing.T) {
 	ctx := context.Background()
 	bucketName := "test-check-exists-bucket"
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	t.Run("object exists", func(t *testing.T) {
 		key := "test-exists.txt"
@@ -236,8 +235,7 @@ func TestListS3ObjectsDetailed(t *testing.T) {
 	ctx := context.Background()
 	bucketName := "test-list-bucket"
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	testObjects := []struct {
 		key  string

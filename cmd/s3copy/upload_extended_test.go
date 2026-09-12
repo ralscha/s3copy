@@ -19,8 +19,7 @@ func TestUploadToS3SingleFile(t *testing.T) {
 	ctx := context.Background()
 	bucketName := "test-single-upload-bucket"
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	tempDir := t.TempDir()
 	testFile := filepath.Join(tempDir, "test.txt")
@@ -51,8 +50,7 @@ func TestUploadToS3WithSkipExisting(t *testing.T) {
 	ctx := context.Background()
 	bucketName := "test-skip-upload-bucket"
 
-	_, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	setupRustFSTest(t, ctx, bucketName)
 
 	tempDir := t.TempDir()
 	testFile := filepath.Join(tempDir, "skip-test.txt")
@@ -82,8 +80,7 @@ func TestUploadToS3WithEncryption(t *testing.T) {
 	ctx := context.Background()
 	bucketName := "test-encrypted-upload-bucket"
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	tempDir := t.TempDir()
 	testFile := filepath.Join(tempDir, "encrypt-test.txt")
@@ -111,8 +108,7 @@ func TestUploadToS3WithGlob(t *testing.T) {
 	ctx := context.Background()
 	bucketName := "test-glob-upload-bucket"
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	tempDir := t.TempDir()
 
@@ -152,8 +148,7 @@ func TestUploadDirectoryWithIgnore(t *testing.T) {
 	ctx := context.Background()
 	bucketName := "test-ignore-upload-bucket"
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	tempDir := t.TempDir()
 
@@ -211,8 +206,7 @@ func TestUploadFileWithParams(t *testing.T) {
 	ctx := context.Background()
 	bucketName := "test-upload-params-bucket"
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	tempDir := t.TempDir()
 	testFile := filepath.Join(tempDir, "params-test.txt")
@@ -239,8 +233,7 @@ func TestUploadDirectoryNested(t *testing.T) {
 	ctx := context.Background()
 	bucketName := "test-nested-upload-bucket"
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	tempDir := t.TempDir()
 

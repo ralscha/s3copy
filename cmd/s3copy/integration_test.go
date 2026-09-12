@@ -15,10 +15,9 @@ func TestS3UploadDownload(t *testing.T) {
 	ctx := context.Background()
 	bucketName := "test-bucket"
 
-	_, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	setupRustFSTest(t, ctx, bucketName)
 
-	testData := []byte("Hello, MinIO! This is a test file for upload and download via CLI.")
+	testData := []byte("Hello, RustFS! This is a test file for upload and download via CLI.")
 	tempDir := t.TempDir()
 	sourceFile := filepath.Join(tempDir, "source.txt")
 	err := os.WriteFile(sourceFile, testData, 0644)

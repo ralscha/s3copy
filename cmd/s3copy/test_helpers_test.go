@@ -5,8 +5,8 @@ import (
 	"context"
 	"io"
 	"os"
-	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -14,47 +14,49 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/minio"
+	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-func TestMain(m *testing.M) {
-	os.Exit(m.Run())
-}
-
-func setupMinIOTest(t *testing.T, ctx context.Context, bucketName string) (*s3.Client, func()) {
+func setupRustFSTest(t *testing.T, ctx context.Context, bucketName string) *s3.Client {
 	t.Helper()
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 
-	minioContainer, err := minio.Run(ctx, "minio/minio:RELEASE.2025-09-07T16-13-09Z")
-	if err != nil {
-		if isDockerUnavailable(err) {
-			t.Skipf("skipping MinIO integration test: Docker/Testcontainers unavailable: %v", err)
-		}
-		require.NoError(t, err)
-	}
+	const (
+		accessKey = "s3copy-test-access"
+		secretKey = "s3copy-test-secret"
+	)
 
-	cleanup := func() {
-		testcontainers.CleanupContainer(t, minioContainer)
-	}
+	rustfsContainer, err := testcontainers.Run(ctx, "rustfs/rustfs:1.0.0-rc.5",
+		testcontainers.WithExposedPorts("9000/tcp"),
+		testcontainers.WithEnv(map[string]string{
+			"RUSTFS_ACCESS_KEY":     accessKey,
+			"RUSTFS_SECRET_KEY":     secretKey,
+			"RUSTFS_ADDRESS":        ":9000",
+			"RUSTFS_CONSOLE_ENABLE": "false",
+		}),
+		testcontainers.WithCmd("/data"),
+		testcontainers.WithWaitStrategy(
+			wait.ForHTTP("/health/ready").WithPort("9000/tcp").WithStartupTimeout(2*time.Minute),
+		),
+	)
+	testcontainers.CleanupContainer(t, rustfsContainer)
+	require.NoError(t, err, "start RustFS")
 
-	endpoint, err := minioContainer.Endpoint(ctx, "")
+	endpoint, err := rustfsContainer.PortEndpoint(ctx, "9000/tcp", "http")
 	require.NoError(t, err)
-
-	if !strings.HasPrefix(endpoint, "http://") {
-		endpoint = "http://" + endpoint
-	}
 
 	resetS3Client()
 
 	config = Config{
 		Endpoint:     endpoint,
-		AccessKey:    "minioadmin",
-		SecretKey:    "minioadmin",
+		AccessKey:    accessKey,
+		SecretKey:    secretKey,
 		Region:       "us-east-1",
 		UsePathStyle: true,
 	}
 
 	cfg, err := awsconfig.LoadDefaultConfig(ctx,
-		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("minioadmin", "minioadmin", "")),
+		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
 		awsconfig.WithRegion("us-east-1"),
 		awsconfig.WithBaseEndpoint(endpoint),
 	)
@@ -71,26 +73,7 @@ func setupMinIOTest(t *testing.T, ctx context.Context, bucketName string) (*s3.C
 		require.NoError(t, err)
 	}
 
-	return s3Client, cleanup
-}
-
-func isDockerUnavailable(err error) bool {
-	msg := strings.ToLower(err.Error())
-	unavailableMessages := []string{
-		"cannot connect to the docker daemon",
-		"docker is not available",
-		"docker daemon",
-		"failed to create docker provider",
-		"rootless docker is not supported",
-	}
-
-	for _, unavailableMessage := range unavailableMessages {
-		if strings.Contains(msg, unavailableMessage) {
-			return true
-		}
-	}
-
-	return false
+	return s3Client
 }
 
 func captureStdout(fn func()) string {

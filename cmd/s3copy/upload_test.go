@@ -45,8 +45,7 @@ func TestUploadToS3Directory(t *testing.T) {
 	ctx := context.Background()
 	bucketName := "test-upload-dir-bucket"
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	tempDir := t.TempDir()
 	subDir := filepath.Join(tempDir, "subdir")
@@ -89,8 +88,7 @@ func TestUploadToS3MultipleFiles(t *testing.T) {
 	ctx := context.Background()
 	bucketName := "test-multiple-bucket"
 
-	s3Client, cleanup := setupMinIOTest(t, ctx, bucketName)
-	defer cleanup()
+	s3Client := setupRustFSTest(t, ctx, bucketName)
 
 	tempDir := t.TempDir()
 	files := []string{
