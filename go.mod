@@ -6,13 +6,13 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.47.1
 	github.com/aws/aws-sdk-go-v2/config v1.33.6
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.6
-	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.4.10
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.4
+	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.4.13
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.0
 	github.com/joho/godotenv v1.5.1
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.44.0
-	github.com/urfave/cli/v3 v3.13.0
+	github.com/urfave/cli/v3 v3.14.0
 	golang.org/x/crypto v0.57.0
 	golang.org/x/term v0.46.0
 )
