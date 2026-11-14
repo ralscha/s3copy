@@ -11,15 +11,15 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@v7.0.1
     
     - name: Set up Go
-      uses: actions/setup-go@v7
+      uses: actions/setup-go@v7.0.0
       with:
         go-version-file: go.mod
     
     - name: Cache Go modules
-      uses: actions/cache@v6
+      uses: actions/cache@v6.1.0
       with:
         path: |
           ~/.cache/go-build
@@ -41,7 +41,7 @@ jobs:
       run: go tool cover -html=coverage.out -o coverage.html
     
     - name: Upload coverage reports
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@v7.0.2
       with:
         name: coverage-report
         path: |
